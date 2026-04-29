@@ -63,6 +63,34 @@ public sealed class ConfigStore
         this._configPath = configPath;
     }
 
+    /* ============================================================================
+     * EnsureExists
+     * Description: Creates the config file with default values when missing.
+     *              No-op when the file is already there, so it is safe to call
+     *              on every daemon startup. defaultSelf seeds the user's own
+     *              normalized name (e.g., from `git config user.name` after
+     *              normalization). When null, Self is created empty and the
+     *              hook will not filter out the user's own folder until Self
+     *              is later set via the UI or a manual edit.
+     * Parameters:
+     *   defaultSelf - optional Self value, used ONLY when the file is being
+     *                 created. Ignored if the file already exists.
+     * Return Values: (none)
+     *=============================================================================
+     */
+    public void EnsureExists(string? defaultSelf = null)
+    {
+        if (File.Exists(this._configPath))
+        {
+            return;
+        }
+        HandoffConfig config = new HandoffConfig
+        {
+            Self = defaultSelf ?? string.Empty,
+        };
+        this.Write(config);
+    }
+
     /* ==========================================================================
      * Read
      * Description: Loads HandoffConfig from disk. Returns a fresh empty config
