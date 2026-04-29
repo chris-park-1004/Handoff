@@ -302,6 +302,13 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void ShellNavigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    {
+        string? tag = (args.SelectedItem as NavigationViewItem)?.Tag as string;
+        this.ContentRoot.Visibility = tag == "dashboard" ? Visibility.Visible : Visibility.Collapsed;
+        this.TeamRoot.Visibility = tag == "team" ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void SetStatus(string title, string message, InfoBarSeverity severity)
     {
         this.StatusInfoBar.Title = title;
