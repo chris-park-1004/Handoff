@@ -39,9 +39,6 @@ public sealed class SharedContextRow
     [JsonPropertyName("tags")]
     public JsonElement? Tags { get; set; }
 
-    [JsonPropertyName("content_hash")]
-    public string ContentHash { get; set; } = "";
-
     [JsonPropertyName("updated_at")]
     public DateTime? UpdatedAt { get; set; }
 }

@@ -123,9 +123,11 @@ function findNewSharedContexts(self, teamMembers, watermarks, rows) {
     const entry = teamMembers.find(m => m && m.name === row.member);
     if (entry && entry.subscribe === false) continue;
 
-    // Trust the DB-provided hash. If it's missing for any reason, fall back
-    // to hashing the row JSON so watermarking still detects changes.
-    const hash = row.content_hash || hashContent(JSON.stringify(row));
+    // Hash is computed client-side from the row JSON — the server no longer
+    // stores it. Stable across runs because we always serialize the same
+    // shape (System.Text.Json on the producer matches JSON.stringify here
+    // for the columns we read).
+    const hash = hashContent(JSON.stringify(row));
     const key = `${row.member}/${row.branch}`;
 
     if (watermarks[key] !== hash) {
