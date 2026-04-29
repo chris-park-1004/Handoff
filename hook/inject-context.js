@@ -5,7 +5,6 @@ const { spawnSync } = require('child_process');
 
 const HOOKS_DIR = __dirname;
 const REPO_ROOT = path.resolve(HOOKS_DIR, '..');
-const TEAM_CONTEXT_DIR = path.resolve(HOOKS_DIR, '../team-members');
 const CONFIG_PATH = path.join(REPO_ROOT, 'config.local.json');
 const WATERMARKS_PATH = path.join(REPO_ROOT, '.local', 'watermarks.json');
 const LOCK_PATH = path.join(REPO_ROOT, '.local', 'team-context-hook.lock');
@@ -16,7 +15,6 @@ const RECEIVER_EXE = path.join(
   'x64',
   'Debug',
   'net8.0-windows10.0.19041.0',
-  'win-x64',
   'Handoff.Receiver.exe'
 );
 const DEBUG_LOG = path.join(REPO_ROOT, '.local', 'team-context-debug.log');
@@ -74,42 +72,66 @@ function hashContent(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-function findNewSharedContexts(self, teamMembers, watermarks) {
+// Pulls every shared_contexts row via Supabase REST. We use curl (shipped on
+// Win10+) to keep this synchronous — hooks must complete fast and predictably,
+// and async/await would add a layer for no real gain at this scale.
+// Returns [] on any failure so the hook still exits cleanly.
+function fetchSharedContextsFromSupabase(supabase) {
+  if (!supabase || !supabase.url || !supabase.key) {
+    log('supabase config missing — fetch skipped');
+    return [];
+  }
+  const endpoint = `${supabase.url}/rest/v1/shared_contexts?select=*`;
+  const result = spawnSync('curl', [
+    '-s', '-S',
+    '-H', `apikey: ${supabase.key}`,
+    '-H', `Authorization: Bearer ${supabase.key}`,
+    '-H', 'Accept: application/json',
+    endpoint,
+  ], { encoding: 'utf8' });
+
+  if (result.status !== 0) {
+    log(`curl failed (status=${result.status}): ${result.stderr || ''}`);
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(result.stdout || '[]');
+    if (!Array.isArray(parsed)) {
+      log(`unexpected supabase payload: ${result.stdout.slice(0, 200)}`);
+      return [];
+    }
+    return parsed;
+  } catch (e) {
+    log(`failed to parse supabase response: ${e.message}`);
+    return [];
+  }
+}
+
+// Filters fetched rows by self-exclusion + subscribe flag, then compares each
+// row's content_hash against watermarks to find what's new for this user.
+// "key" matches the file-based version (member/branch) so existing
+// watermarks.json entries keep working without migration.
+function findNewSharedContexts(self, teamMembers, watermarks, rows) {
   const newItems = [];
-  if (!fs.existsSync(TEAM_CONTEXT_DIR)) return newItems;
+  for (const row of rows) {
+    if (!row || !row.member || !row.branch) continue;
+    if (self && row.member === self) continue;
 
-  const memberDirs = fs.readdirSync(TEAM_CONTEXT_DIR, { withFileTypes: true })
-    .filter(d => d.isDirectory() && !d.name.startsWith('.') && d.name !== self);
-
-  for (const memberDir of memberDirs) {
-    const member = memberDir.name;
-    // Find this member's roster entry. Missing entry → treat as subscribed
-    // (matches daemon's default for newly discovered members). Explicit
-    // subscribe:false → skip.
-    const entry = teamMembers.find(m => m && m.name === member);
+    // Missing roster entry => treated as subscribed (matches daemon's
+    // opt-out default for newly discovered members). Explicit subscribe:false
+    // is the only thing that filters a member out.
+    const entry = teamMembers.find(m => m && m.name === row.member);
     if (entry && entry.subscribe === false) continue;
 
-    const memberPath = path.join(TEAM_CONTEXT_DIR, member);
-    const branches = fs.readdirSync(memberPath, { withFileTypes: true })
-      .filter(d => d.isDirectory());
+    // Trust the DB-provided hash. If it's missing for any reason, fall back
+    // to hashing the row JSON so watermarking still detects changes.
+    const hash = row.content_hash || hashContent(JSON.stringify(row));
+    const key = `${row.member}/${row.branch}`;
 
-    for (const branchDir of branches) {
-      const branch = branchDir.name;
-      const sharedPath = path.join(memberPath, branch, 'shared-context.json');
-      if (!fs.existsSync(sharedPath)) continue;
-
-      const content = fs.readFileSync(sharedPath, 'utf8');
-      const hash = hashContent(content);
-      const key = `${member}/${branch}`;
-
-      if (watermarks[key] !== hash) {
-        let parsed = null;
-        try { parsed = JSON.parse(content); } catch (_) {}
-        newItems.push({ key, content, hash, parsed });
-      }
+    if (watermarks[key] !== hash) {
+      newItems.push({ key, hash, parsed: row });
     }
   }
-
   return newItems;
 }
 
@@ -146,14 +168,18 @@ try {
 
 log(`${event} fired`);
 
-const config = readJSON(CONFIG_PATH, { self: null, 'team-members': [] });
+const config = readJSON(CONFIG_PATH, { self: null, 'team-members': [], supabase: null });
 let watermarks = readJSON(WATERMARKS_PATH, {});
 
-const newItems = findNewSharedContexts(
-  config.self,
-  Array.isArray(config['team-members']) ? config['team-members'] : [],
-  watermarks
-);
+// One Supabase fetch per hook invocation, cached in `rows`. The post-lock
+// recheck uses the same snapshot — re-fetching after the lock would catch
+// rows pushed in the millisecond gap, but at the cost of doubling network
+// latency on the hot path. The watermark comparison itself still re-runs
+// (cheap) so we never inject a hash that another instance already consumed.
+const rows = fetchSharedContextsFromSupabase(config.supabase);
+const teamMembers = Array.isArray(config['team-members']) ? config['team-members'] : [];
+
+const newItems = findNewSharedContexts(config.self, teamMembers, watermarks, rows);
 
 if (newItems.length === 0) {
   log(`${event}: no new context — silent exit`);
@@ -169,11 +195,7 @@ if (lockHandle === null) {
 }
 
 watermarks = readJSON(WATERMARKS_PATH, {});
-const lockedNewItems = findNewSharedContexts(
-  config.self,
-  Array.isArray(config['team-members']) ? config['team-members'] : [],
-  watermarks
-);
+const lockedNewItems = findNewSharedContexts(config.self, teamMembers, watermarks, rows);
 
 if (lockedNewItems.length === 0) {
   log(`${event}: no new context after lock — silent exit`);
