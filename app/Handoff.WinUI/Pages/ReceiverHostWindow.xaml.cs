@@ -1,6 +1,8 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using Handoff.WinUI.Services;
 using Microsoft.UI;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Windows.Graphics;
@@ -12,6 +14,23 @@ public sealed partial class ReceiverHostWindow : Window
 {
     private const int WindowWidth = 600;
     private const int WindowHeight = 480;
+    private const int EdgeMargin = 16;
+    private const int SlideDurationMs = 650;
+    private const int FrameIntervalMs = 8;
+
+    private const uint SWP_NOSIZE = 0x0001;
+    private const uint SWP_NOZORDER = 0x0004;
+    private const uint SWP_NOACTIVATE = 0x0010;
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(nint hWnd, nint hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+
+    private nint _hwnd;
+    private int _restingX;
+    private int _restingY;
+    private int _startX;
+    private DispatcherQueueTimer? _slideTimer;
+    private DateTime _slideStart;
 
     public ReceiverHostWindow()
     {
@@ -22,8 +41,8 @@ public sealed partial class ReceiverHostWindow : Window
 
     private void ConfigureWindow()
     {
-        var hwnd = WindowNative.GetWindowHandle(this);
-        var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
+        _hwnd = WindowNative.GetWindowHandle(this);
+        var windowId = Win32Interop.GetWindowIdFromWindow(_hwnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
 
         appWindow.Title = "Handoff";
@@ -44,9 +63,11 @@ public sealed partial class ReceiverHostWindow : Window
 
         var displayArea = DisplayArea.GetFromWindowId(windowId, DisplayAreaFallback.Nearest);
         var work = displayArea.WorkArea;
-        var x = work.X + (work.Width - WindowWidth) / 2;
-        var y = work.Y + (work.Height - WindowHeight) / 2;
-        appWindow.MoveAndResize(new RectInt32(x, y, WindowWidth, WindowHeight));
+        _restingX = work.X + work.Width - WindowWidth - EdgeMargin;
+        _restingY = work.Y + work.Height - WindowHeight - EdgeMargin;
+        _startX = work.X + work.Width;
+
+        appWindow.MoveAndResize(new RectInt32(_startX, _restingY, WindowWidth, WindowHeight));
     }
 
     private void PopulateContent()
@@ -73,7 +94,26 @@ public sealed partial class ReceiverHostWindow : Window
 
     private void OnRootLoaded(object sender, RoutedEventArgs e)
     {
-        EnterStoryboard.Begin();
+        _slideStart = DateTime.UtcNow;
+        _slideTimer = DispatcherQueue.CreateTimer();
+        _slideTimer.Interval = TimeSpan.FromMilliseconds(FrameIntervalMs);
+        _slideTimer.Tick += OnSlideTick;
+        _slideTimer.Start();
+    }
+
+    private void OnSlideTick(DispatcherQueueTimer timer, object args)
+    {
+        var elapsed = (DateTime.UtcNow - _slideStart).TotalMilliseconds;
+        var t = Math.Clamp(elapsed / SlideDurationMs, 0, 1);
+        var eased = 1 - Math.Pow(1 - t, 3); // cubic ease-out
+
+        var x = (int)(_startX + (_restingX - _startX) * eased);
+        SetWindowPos(_hwnd, 0, x, _restingY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+        if (t >= 1)
+        {
+            timer.Stop();
+        }
     }
 
     private void OnAcceptClick(object sender, RoutedEventArgs e)
