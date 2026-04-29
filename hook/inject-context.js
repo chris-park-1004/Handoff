@@ -5,9 +5,10 @@ const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 const HOOKS_DIR = __dirname;
+const REPO_ROOT = path.resolve(HOOKS_DIR, '..');
 const TEAM_CONTEXT_DIR = path.resolve(HOOKS_DIR, '../team-members');
-const CONFIG_PATH = path.resolve(HOOKS_DIR, '..', 'config.local.json');
-const WATERMARKS_PATH = path.join(TEAM_CONTEXT_DIR, '.local', 'watermarks.json');
+const CONFIG_PATH = path.join(REPO_ROOT, 'config.local.json');
+const WATERMARKS_PATH = path.join(REPO_ROOT, '.local', 'watermarks.json');
 const GATE_PS1 = path.join(HOOKS_DIR, 'gate.ps1');
 const DEBUG_LOG = path.join(os.tmpdir(), 'team-context-debug.log');
 

@@ -8,7 +8,7 @@
 # Each developer has their own — must not leak to teammates.
 config.local.json
 claude-statusline.json
-team-members/.local/*
+.local/*
 .claude/
 CLAUDE.md
 
