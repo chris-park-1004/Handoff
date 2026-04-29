@@ -13,7 +13,7 @@ Add-Type -AssemblyName PresentationFramework
         Topmost="True">
   <DockPanel Margin="12">
     <TextBlock DockPanel.Dock="Top"
-               Text="About to inject the following context into Claude Code:"
+               Text="About to inject the following context into your coding assistant:"
                FontWeight="Bold"
                Margin="0,0,0,8"/>
     <StackPanel DockPanel.Dock="Bottom"

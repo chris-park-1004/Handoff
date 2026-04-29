@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
@@ -9,8 +8,10 @@ const REPO_ROOT = path.resolve(HOOKS_DIR, '..');
 const TEAM_CONTEXT_DIR = path.resolve(HOOKS_DIR, '../team-members');
 const CONFIG_PATH = path.join(REPO_ROOT, 'config.local.json');
 const WATERMARKS_PATH = path.join(REPO_ROOT, '.local', 'watermarks.json');
+const LOCK_PATH = path.join(REPO_ROOT, '.local', 'team-context-hook.lock');
 const GATE_PS1 = path.join(HOOKS_DIR, 'gate.ps1');
-const DEBUG_LOG = path.join(os.tmpdir(), 'team-context-debug.log');
+const DEBUG_LOG = path.join(REPO_ROOT, '.local', 'team-context-debug.log');
+const LOCK_STALE_MS = 60_000;
 
 function log(msg) {
   try {
@@ -29,6 +30,35 @@ function readJSON(filePath, fallback) {
 function writeJSON(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+}
+
+function tryAcquireLock() {
+  fs.mkdirSync(path.dirname(LOCK_PATH), { recursive: true });
+
+  try {
+    const handle = fs.openSync(LOCK_PATH, 'wx');
+    fs.writeFileSync(handle, `${process.pid}\n${new Date().toISOString()}\n`);
+    return handle;
+  } catch (error) {
+    if (error && error.code === 'EEXIST') {
+      try {
+        const age = Date.now() - fs.statSync(LOCK_PATH).mtimeMs;
+        if (age > LOCK_STALE_MS) {
+          fs.unlinkSync(LOCK_PATH);
+          return tryAcquireLock();
+        }
+      } catch (_) {}
+
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+function releaseLock(handle) {
+  try { fs.closeSync(handle); } catch (_) {}
+  try { fs.unlinkSync(LOCK_PATH); } catch (_) {}
 }
 
 function hashContent(content) {
@@ -108,7 +138,7 @@ try {
 log(`${event} fired`);
 
 const config = readJSON(CONFIG_PATH, { self: null, 'team-members': [] });
-const watermarks = readJSON(WATERMARKS_PATH, {});
+let watermarks = readJSON(WATERMARKS_PATH, {});
 
 const newItems = findNewSharedContexts(
   config.self,
@@ -123,21 +153,58 @@ if (newItems.length === 0) {
 
 log(`${event}: ${newItems.length} new item(s): ${newItems.map(i => i.key).join(', ')}`);
 
-const preview = buildPreview(newItems);
+const lockHandle = tryAcquireLock();
+if (lockHandle === null) {
+  log(`${event}: another hook instance is active — silent exit`);
+  process.exit(0);
+}
 
-const result = spawnSync(
-  'powershell',
-  ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', GATE_PS1],
-  { input: preview, encoding: 'utf8' }
+watermarks = readJSON(WATERMARKS_PATH, {});
+const lockedNewItems = findNewSharedContexts(
+  config.self,
+  Array.isArray(config['team-members']) ? config['team-members'] : [],
+  watermarks
 );
+
+if (lockedNewItems.length === 0) {
+  log(`${event}: no new context after lock — silent exit`);
+  releaseLock(lockHandle);
+  process.exit(0);
+}
+
+const preview = buildPreview(lockedNewItems);
+
+let result;
+try {
+  result = spawnSync(
+    'powershell',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', GATE_PS1],
+    { input: preview, encoding: 'utf8' }
+  );
+} finally {
+  releaseLock(lockHandle);
+}
 
 const code = result.status;
 log(`${event}: gate exited with code ${code}`);
-
-for (const item of newItems) {
-  watermarks[item.key] = item.hash;
+if (result.error) {
+  log(`${event}: gate error: ${result.error.message}`);
 }
-writeJSON(WATERMARKS_PATH, watermarks);
+if (result.signal) {
+  log(`${event}: gate signal: ${result.signal}`);
+}
+if (result.stderr) {
+  log(`${event}: gate stderr: ${result.stderr.trim()}`);
+}
+
+if (code === 0 || code === 1) {
+  for (const item of lockedNewItems) {
+    watermarks[item.key] = item.hash;
+  }
+  writeJSON(WATERMARKS_PATH, watermarks);
+} else {
+  log(`${event}: gate did not finish cleanly — watermark unchanged`);
+}
 
 if (code === 0) {
   process.stdout.write(preview);
