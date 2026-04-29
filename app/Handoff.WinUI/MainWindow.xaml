@@ -108,8 +108,8 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition x:Name="SidebarColumn" Width="320" />
-                        <ColumnDefinition x:Name="DetailsColumn" Width="*" />
+                        <ColumnDefinition x:Name="SidebarColumn" Width="1*" MinWidth="280" />
+                        <ColumnDefinition x:Name="DetailsColumn" Width="2*" />
                     </Grid.ColumnDefinitions>
 
                     <StackPanel
@@ -244,8 +244,8 @@
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition x:Name="MembersColumn" Width="260" />
-                                <ColumnDefinition x:Name="BranchesColumn" Width="*" />
+                                <ColumnDefinition x:Name="MembersColumn" Width="1*" MinWidth="240" />
+                                <ColumnDefinition x:Name="BranchesColumn" Width="1*" MinWidth="240" />
                             </Grid.ColumnDefinitions>
 
                             <Border
