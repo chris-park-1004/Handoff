@@ -6,7 +6,7 @@ const { spawnSync } = require('child_process');
 
 const HOOKS_DIR = __dirname;
 const TEAM_CONTEXT_DIR = path.resolve(HOOKS_DIR, '../team-members');
-const CONFIG_PATH = path.join(TEAM_CONTEXT_DIR, 'config.local.json');
+const CONFIG_PATH = path.resolve(HOOKS_DIR, '..', 'config.local.json');
 const WATERMARKS_PATH = path.join(TEAM_CONTEXT_DIR, '.local', 'watermarks.json');
 const GATE_PS1 = path.join(HOOKS_DIR, 'gate.ps1');
 const DEBUG_LOG = path.join(os.tmpdir(), 'team-context-debug.log');
@@ -34,7 +34,7 @@ function hashContent(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-function findNewSharedContexts(self, subscriptions, watermarks) {
+function findNewSharedContexts(self, teamMembers, watermarks) {
   const newItems = [];
   if (!fs.existsSync(TEAM_CONTEXT_DIR)) return newItems;
 
@@ -43,7 +43,11 @@ function findNewSharedContexts(self, subscriptions, watermarks) {
 
   for (const memberDir of memberDirs) {
     const member = memberDir.name;
-    if (subscriptions.length > 0 && !subscriptions.includes(member)) continue;
+    // Find this member's roster entry. Missing entry → treat as subscribed
+    // (matches daemon's default for newly discovered members). Explicit
+    // subscribe:false → skip.
+    const entry = teamMembers.find(m => m && m.name === member);
+    if (entry && entry.subscribe === false) continue;
 
     const memberPath = path.join(TEAM_CONTEXT_DIR, member);
     const branches = fs.readdirSync(memberPath, { withFileTypes: true })
@@ -102,12 +106,12 @@ try {
 
 log(`${event} fired`);
 
-const config = readJSON(CONFIG_PATH, { self: null, subscriptions: [], flags: {} });
+const config = readJSON(CONFIG_PATH, { self: null, 'team-members': [] });
 const watermarks = readJSON(WATERMARKS_PATH, {});
 
 const newItems = findNewSharedContexts(
   config.self,
-  Array.isArray(config.subscriptions) ? config.subscriptions : [],
+  Array.isArray(config['team-members']) ? config['team-members'] : [],
   watermarks
 );
 
