@@ -1,11 +1,11 @@
+using Handoff.WinUI.Services;
 using Microsoft.UI.Xaml;
+using Microsoft.Windows.AppNotifications;
 
 namespace Handoff.WinUI;
 
 public partial class App : Application
 {
-    private Window? _window;
-
     public App()
     {
         InitializeComponent();
@@ -13,7 +13,8 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _window = new MainWindow();
-        _window.Activate();
+        AppNotificationManager.Default.Register();
+        NotificationService.ShowTeamChangeTest();
+        Exit();
     }
 }
