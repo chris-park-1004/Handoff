@@ -35,19 +35,15 @@
                 <NavigationViewItem Content="Activity" Icon="Sync" />
             </NavigationView.MenuItems>
 
-            <ScrollViewer
-                HorizontalScrollBarVisibility="Disabled"
-                HorizontalScrollMode="Disabled"
-                VerticalScrollBarVisibility="Auto"
-                VerticalScrollMode="Auto">
             <Grid
                 x:Name="ContentRoot"
                 Padding="28"
-                RowSpacing="0">
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
                 <Grid
@@ -102,21 +98,25 @@
                     x:Name="MainContentGrid"
                     Grid.Row="2"
                     ColumnSpacing="20"
-                    RowSpacing="20">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
+                    VerticalAlignment="Stretch">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition x:Name="SidebarColumn" Width="1*" MinWidth="280" />
-                        <ColumnDefinition x:Name="DetailsColumn" Width="2*" />
+                        <ColumnDefinition x:Name="SidebarColumn" Width="1*" MinWidth="260" />
+                        <ColumnDefinition x:Name="MembersColumn" Width="1*" MinWidth="240" />
+                        <ColumnDefinition x:Name="BranchesColumn" Width="1*" MinWidth="240" />
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel
+                    <Grid
                         x:Name="SidebarPanel"
-                        Spacing="16">
+                        RowSpacing="16"
+                        VerticalAlignment="Stretch">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
                         <Border
                             Padding="18"
+                            VerticalAlignment="Stretch"
                             Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1"
@@ -188,7 +188,9 @@
                         </Border>
 
                         <Border
+                            Grid.Row="1"
                             Padding="18"
+                            VerticalAlignment="Stretch"
                             Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1"
@@ -219,125 +221,98 @@
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                    </StackPanel>
+                    </Grid>
 
-                    <Grid
-                        x:Name="DetailsPanel"
+                    <Border
+                        x:Name="MembersPanel"
                         Grid.Column="1"
-                        RowSpacing="16">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-
-                        <TextBlock
-                            Text="Discovered team context"
-                            Style="{ThemeResource SubtitleTextBlockStyle}" />
-
-                        <Grid
-                            x:Name="ContextGrid"
-                            Grid.Row="1"
-                            ColumnSpacing="16"
-                            RowSpacing="16">
+                        VerticalAlignment="Stretch"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                        <Grid Padding="16" RowSpacing="12">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition x:Name="MembersColumn" Width="1*" MinWidth="240" />
-                                <ColumnDefinition x:Name="BranchesColumn" Width="1*" MinWidth="240" />
-                            </Grid.ColumnDefinitions>
-
-                            <Border
-                                x:Name="MembersPanel"
-                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                BorderThickness="1"
-                                CornerRadius="8">
-                                <Grid Padding="16" RowSpacing="12">
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="*" />
-                                    </Grid.RowDefinitions>
-                                    <TextBlock Text="Team members" FontWeight="SemiBold" />
-                                    <ListView
-                                        x:Name="MembersList"
-                                        Grid.Row="1"
-                                        SelectionMode="None">
-                                        <ListView.ItemTemplate>
-                                            <DataTemplate>
-                                                <Grid ColumnSpacing="10">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="Auto" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <FontIcon
-                                                        VerticalAlignment="Center"
-                                                        FontSize="14"
-                                                        Glyph="&#xE77B;" />
-                                                    <TextBlock
-                                                        Grid.Column="1"
-                                                        Text="{Binding}"
-                                                        TextTrimming="CharacterEllipsis" />
-                                                </Grid>
-                                            </DataTemplate>
-                                        </ListView.ItemTemplate>
-                                    </ListView>
-                                </Grid>
-                            </Border>
-
-                            <Border
-                                x:Name="BranchesPanel"
-                                Grid.Column="1"
-                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                BorderThickness="1"
-                                CornerRadius="8">
-                                <Grid Padding="16" RowSpacing="12">
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="*" />
-                                    </Grid.RowDefinitions>
-                                    <TextBlock Text="Branches" FontWeight="SemiBold" />
-                                    <ListView
-                                        x:Name="BranchesList"
-                                        Grid.Row="1"
-                                        SelectionMode="None">
-                                        <ListView.ItemTemplate>
-                                            <DataTemplate>
-                                                <Grid ColumnSpacing="12">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="Auto" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <FontIcon
-                                                        VerticalAlignment="Center"
-                                                        FontSize="14"
-                                                        Glyph="&#xE8F1;" />
-                                                    <StackPanel Grid.Column="1" Spacing="2">
-                                                        <TextBlock
-                                                            Text="{Binding Title}"
-                                                            TextTrimming="CharacterEllipsis" />
-                                                        <TextBlock
-                                                            Text="{Binding Subtitle}"
-                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                            TextTrimming="CharacterEllipsis" />
-                                                    </StackPanel>
-                                                </Grid>
-                                            </DataTemplate>
-                                        </ListView.ItemTemplate>
-                                    </ListView>
-                                </Grid>
-                            </Border>
+                            <TextBlock Text="Team members" FontWeight="SemiBold" />
+                            <ListView
+                                x:Name="MembersList"
+                                Grid.Row="1"
+                                SelectionMode="None">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <FontIcon
+                                                VerticalAlignment="Center"
+                                                FontSize="14"
+                                                Glyph="&#xE77B;" />
+                                            <TextBlock
+                                                Grid.Column="1"
+                                                Text="{Binding}"
+                                                TextTrimming="CharacterEllipsis" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
                         </Grid>
-                    </Grid>
+                    </Border>
+
+                    <Border
+                        x:Name="BranchesPanel"
+                        Grid.Column="2"
+                        VerticalAlignment="Stretch"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                        <Grid Padding="16" RowSpacing="12">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="Branches" FontWeight="SemiBold" />
+                            <ListView
+                                x:Name="BranchesList"
+                                Grid.Row="1"
+                                SelectionMode="None">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <FontIcon
+                                                VerticalAlignment="Center"
+                                                FontSize="14"
+                                                Glyph="&#xE8F1;" />
+                                            <StackPanel Grid.Column="1" Spacing="2">
+                                                <TextBlock
+                                                    Text="{Binding Title}"
+                                                    TextTrimming="CharacterEllipsis" />
+                                                <TextBlock
+                                                    Text="{Binding Subtitle}"
+                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                    TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
+                    </Border>
                 </Grid>
 
                 <TextBlock
                     x:Name="StatusText"
                     Visibility="Collapsed" />
             </Grid>
-            </ScrollViewer>
         </NavigationView>
     </Grid>
 </Window>
