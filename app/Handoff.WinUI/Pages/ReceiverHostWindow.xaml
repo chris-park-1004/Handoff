@@ -12,60 +12,113 @@
 
         <Grid x:Name="DragArea" Grid.Row="0" Background="Transparent" />
 
-        <Grid Grid.Row="1" Padding="24,8,24,24" RowSpacing="12">
+        <Grid Grid.Row="1" Padding="24,4,24,20" RowSpacing="16">
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <TextBlock
-                Grid.Row="0"
-                x:Name="HeadingText"
-                Text="New team update"
-                FontSize="20"
-                FontWeight="SemiBold" />
+            <!-- Header: avatar circle + name/attribution -->
+            <Grid Grid.Row="0" ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
 
-            <TextBlock
+                <Border
+                    Grid.Column="0"
+                    Width="40"
+                    Height="40"
+                    CornerRadius="20"
+                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                    VerticalAlignment="Center">
+                    <TextBlock
+                        x:Name="AvatarInitial"
+                        Text="?"
+                        Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                        FontSize="16"
+                        FontWeight="SemiBold"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center" />
+                </Border>
+
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                    <TextBlock
+                        x:Name="HeadingText"
+                        Text="New team update"
+                        FontSize="16"
+                        FontWeight="SemiBold" />
+                    <TextBlock
+                        x:Name="AttributionText"
+                        Opacity="0.65"
+                        FontSize="12"
+                        TextWrapping="NoWrap"
+                        TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Body card: commit message + scrollable summary -->
+            <Border
                 Grid.Row="1"
-                x:Name="AttributionText"
-                Opacity="0.75"
-                TextWrapping="Wrap" />
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Padding="16">
+                <Grid RowSpacing="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
 
+                    <TextBlock
+                        Grid.Row="0"
+                        x:Name="CommitMessageText"
+                        FontWeight="SemiBold"
+                        FontSize="14"
+                        TextWrapping="Wrap" />
+
+                    <ScrollViewer
+                        Grid.Row="1"
+                        VerticalScrollBarVisibility="Auto"
+                        HorizontalScrollBarVisibility="Disabled">
+                        <TextBlock
+                            x:Name="SummaryText"
+                            TextWrapping="Wrap"
+                            IsTextSelectionEnabled="True"
+                            LineHeight="22"
+                            Opacity="0.9" />
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <!-- Files line -->
             <TextBlock
                 Grid.Row="2"
-                x:Name="CommitMessageText"
-                FontWeight="SemiBold"
-                TextWrapping="Wrap" />
-
-            <ScrollViewer
-                Grid.Row="3"
-                VerticalScrollBarVisibility="Auto"
-                HorizontalScrollBarVisibility="Disabled"
-                Padding="0,4,8,4">
-                <TextBlock
-                    x:Name="SummaryText"
-                    TextWrapping="Wrap"
-                    IsTextSelectionEnabled="True" />
-            </ScrollViewer>
-
-            <TextBlock
-                Grid.Row="4"
                 x:Name="ChangedFilesText"
-                Opacity="0.7"
+                Opacity="0.6"
                 FontSize="12"
                 TextWrapping="Wrap" />
 
+            <!-- Separator -->
+            <Border
+                Grid.Row="3"
+                Height="1"
+                Background="{ThemeResource DividerStrokeColorDefaultBrush}"
+                Margin="0,4,0,0" />
+
+            <!-- Actions -->
             <StackPanel
-                Grid.Row="5"
+                Grid.Row="4"
                 Orientation="Horizontal"
                 HorizontalAlignment="Right"
-                Spacing="8">
-                <Button x:Name="DenyButton" Content="Deny" Click="OnDenyClick" MinWidth="96" />
-                <Button x:Name="AcceptButton" Content="Accept" Click="OnAcceptClick" Style="{ThemeResource AccentButtonStyle}" MinWidth="96" />
+                Spacing="8"
+                Margin="0,4,0,0">
+                <Button x:Name="DenyButton" Content="Deny" Click="OnDenyClick" MinWidth="100" />
+                <Button x:Name="AcceptButton" Content="Accept" Click="OnAcceptClick" Style="{ThemeResource AccentButtonStyle}" MinWidth="100" />
             </StackPanel>
         </Grid>
     </Grid>

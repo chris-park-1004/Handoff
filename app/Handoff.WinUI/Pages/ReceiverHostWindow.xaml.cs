@@ -75,6 +75,7 @@ public sealed partial class ReceiverHostWindow : Window
         var change = TeamChange.FindLatest();
         if (change is null)
         {
+            AvatarInitial.Text = "•";
             HeadingText.Text = "No team updates yet";
             AttributionText.Text = string.Empty;
             CommitMessageText.Text = string.Empty;
@@ -85,8 +86,10 @@ public sealed partial class ReceiverHostWindow : Window
             return;
         }
 
-        HeadingText.Text = $"Update from {FormatName(change.Author)}";
-        AttributionText.Text = $"on {change.Branch} • {FormatTime(change.Timestamp)}";
+        var name = FormatName(change.Author);
+        AvatarInitial.Text = GetInitial(name);
+        HeadingText.Text = name;
+        AttributionText.Text = $"{change.Branch} • {FormatTime(change.Timestamp)}";
         CommitMessageText.Text = change.CommitMessage;
         SummaryText.Text = change.Summary;
         ChangedFilesText.Text = FormatChangedFiles(change.ChangedFiles);
@@ -131,6 +134,12 @@ public sealed partial class ReceiverHostWindow : Window
     private static string FormatName(string name)
     {
         return CultureInfo.CurrentCulture.TextInfo.ToTitleCase(name);
+    }
+
+    private static string GetInitial(string name)
+    {
+        var trimmed = name.Trim();
+        return trimmed.Length == 0 ? "?" : trimmed[..1].ToUpperInvariant();
     }
 
     private static string FormatTime(DateTimeOffset time)
