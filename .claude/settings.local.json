@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .team-context/.hooks/inject-context.js"
+            "command": "node .hooks/inject-context.js"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .team-context/.hooks/inject-context.js"
+            "command": "node .hooks/inject-context.js"
           }
         ]
       }

@@ -8,8 +8,10 @@
 # Each developer has their own — must not leak to teammates.
 config.local.json
 claude-statusline.json
-.local/*
+team-members/.local/*
 .claude/
+CLAUDE.md
+
 # OS noise
 .DS_Storec
 Thumbs.db
