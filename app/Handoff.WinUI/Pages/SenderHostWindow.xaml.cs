@@ -46,6 +46,11 @@ public sealed partial class SenderHostWindow : Window
         appWindow.MoveAndResize(new RectInt32(x, y, WindowWidth, WindowHeight));
     }
 
+    private void OnRootLoaded(object sender, RoutedEventArgs e)
+    {
+        EnterStoryboard.Begin();
+    }
+
     private void OnSendClick(object sender, RoutedEventArgs e)
     {
         var summary = SummaryTextBox.Text.Trim();
