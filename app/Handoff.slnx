@@ -1,3 +1,5 @@
 <Solution>
-  <Project Path="Handoff.WinUI/Handoff.WinUI.csproj" />
+  <Project Path="Handoff.WinUI/Handoff.WinUI.csproj">
+    <Platform Solution="Debug|*" Project="x64" />
+  </Project>
 </Solution>
