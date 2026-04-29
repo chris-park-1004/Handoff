@@ -14,7 +14,7 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         AppNotificationManager.Default.Register();
-        NotificationService.ShowTeamChangeTest();
+        NotificationService.ShowLatestTeamChange();
         Exit();
     }
 }
