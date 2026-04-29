@@ -19,6 +19,8 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         this.InitializeComponent();
+        this.ExtendsContentIntoTitleBar = true;
+        this.SetTitleBar(this.AppTitleBar);
         this.MembersList.ItemsSource = this._members;
         this.BranchesList.ItemsSource = this._branches;
         this.Closed += this.OnWindowClosed;
