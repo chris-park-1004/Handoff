@@ -1,14 +1,17 @@
+using Handoff.WinUI.Models;
+
 namespace Handoff.WinUI.Services;
 
 /// <summary>
 /// Result of a single SyncService polling cycle.
-/// FetchSucceeded == false does not necessarily mean the cycle failed —
-/// discovery may still have run against cached remote refs. ErrorMessage
-/// is the canonical "did this cycle fail?" signal (null = success).
+/// SupabaseReachable == false does not necessarily mean the cycle failed —
+/// the cached roster in config.local.json is still usable, and the next
+/// tick may recover. ErrorMessage is the canonical "did this cycle fail?"
+/// signal (null = success).
 /// </summary>
 public sealed record SyncCycleResult(
-    bool FetchSucceeded,
-    int BranchesDiscovered,
+    bool SupabaseReachable,
+    int RowsDiscovered,
     int MembersTotal,
     DateTime CompletedAt,
     string? ErrorMessage)
@@ -22,8 +25,21 @@ public sealed class SyncService : IDisposable
     // the constructor for tests or different deployment profiles.
     private static readonly TimeSpan DefaultInterval = TimeSpan.FromSeconds(30);
 
+    // Logins that we never push into team_members even if they appear in the local
+    // roster. "github" leaks in from older git-based discovery (origin URL like
+    // git@github.com:owner/repo.git was misparsed as a committer name in a previous
+    // iteration); the GitHub corporate account does exist, so a 200 OK from the
+    // profile API would otherwise pollute the team_members table.
+    private static readonly IReadOnlySet<string> ExcludedLogins =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "github",
+        };
+
     private readonly GitProcess _git;
     private readonly ConfigStore _configStore;
+    private readonly SupabaseClient _supabase;
+    private readonly GitHubClient _github;
     private readonly TeamMemberDiscovery _discovery;
     private readonly string _userRepoPath;
     private readonly TimeSpan _interval;
@@ -42,39 +58,42 @@ public sealed class SyncService : IDisposable
 
     /* ======================================================================================
      * SyncService (constructor)
-     * Description: Wires up the daemon against an existing GitProcess and ConfigStore.
-     *              The discovery instance is created internally — callers that need a
-     *              different exclusion set can extend this constructor later. The loop
-     *              does NOT start until Start() is called, so a caller can subscribe to
-     *              CycleCompleted before the first cycle fires.
+     * Description: Wires up the daemon against an existing GitProcess, ConfigStore, and
+     *              SupabaseClient. GitProcess is retained only for the first-run
+     *              `git config user.name` lookup that bootstraps Self in config.local.json
+     *              — the cycle itself no longer touches git. Discovery is created
+     *              internally so callers do not have to manage one extra dependency.
      * Parameters:
-     *   git              - GitProcess wrapper for invoking git commands
-     *   configStore      - ConfigStore bound to the user's config.local.json path
-     *   userRepoPath     - absolute path to the user's main repo (where origin lives)
-     *   teamMembersPath  - absolute path to the team-members/ folder for EnsureFolders
-     *   interval         - polling cadence; defaults to 30s when null
+     *   git           - GitProcess wrapper (used only for the bootstrap user.name read)
+     *   configStore   - ConfigStore bound to the user's config.local.json path
+     *   supabase      - configured Supabase HTTP wrapper
+     *   userRepoPath  - absolute path to the user's main repo (passed through to git config)
+     *   interval      - polling cadence; defaults to 30s when null
      * Return Values: (constructor)
      * ======================================================================================
      */
     public SyncService(
         GitProcess git,
         ConfigStore configStore,
+        SupabaseClient supabase,
+        GitHubClient github,
         string userRepoPath,
-        string teamMembersPath,
         TimeSpan? interval = null)
     {
         this._git = git;
         this._configStore = configStore;
+        this._supabase = supabase;
+        this._github = github;
         this._userRepoPath = userRepoPath;
-        this._discovery = new TeamMemberDiscovery(git, userRepoPath, teamMembersPath);
+        this._discovery = new TeamMemberDiscovery(supabase);
         this._interval = interval ?? DefaultInterval;
     }
 
     /* ======================================================================================
      * Start
-     * Description: Kicks off the polling loop on the thread pool. No-op-but-throws if
-     *              the service was already started. The loop runs until StopAsync (or
-     *              Dispose) is called, surfacing each cycle's result via CycleCompleted.
+     * Description: Kicks off the polling loop on the thread pool. Throws if the service
+     *              was already started. The loop runs until StopAsync (or Dispose) is
+     *              called, surfacing each cycle's result via CycleCompleted.
      * Parameters: (none)
      * Return Values: (none)
      * ======================================================================================
@@ -138,7 +157,7 @@ public sealed class SyncService : IDisposable
      *              null when a cycle is ALREADY running, so the caller can show "busy"
      *              instead of stomping on disk state.
      * Parameters:
-     *   ct - cancellation token; cancellation propagates into the underlying git/file ops
+     *   ct - cancellation token; propagates into the underlying HTTP call
      * Return Values:
      *   SyncCycleResult on success/failure of this cycle, or null if another cycle was
      *   in progress and this call did nothing.
@@ -146,8 +165,6 @@ public sealed class SyncService : IDisposable
      */
     public async Task<SyncCycleResult?> RunOnceAsync(CancellationToken ct = default)
     {
-        // Try-acquire with zero wait — if the loop is mid-cycle, return null so the
-        // caller can present "busy" rather than queuing a redundant pass.
         if (!await this._cycleLock.WaitAsync(0, ct).ConfigureAwait(false))
         {
             return null;
@@ -179,8 +196,9 @@ public sealed class SyncService : IDisposable
      */
     private async Task RunLoopAsync(CancellationToken ct)
     {
-        // First-run bootstrap. Wrapped so a transient git failure here does not kill
-        // the loop — config can still be created later when a user provides Self via UI.
+        // First-run bootstrap of Self. Wrapped so a transient git failure here does not
+        // kill the loop — the user can later set Self via the UI and the daemon will
+        // pick it up on the next read.
         try
         {
             if (!this._configStore.Exists())
@@ -207,9 +225,6 @@ public sealed class SyncService : IDisposable
 
         while (!ct.IsCancellationRequested)
         {
-            // Non-blocking acquire. If the previous cycle is still in flight (e.g. user
-            // clicked Discover button and it's mid-execution), we skip this tick rather
-            // than serialize behind it.
             bool acquired = await this._cycleLock.WaitAsync(0, ct).ConfigureAwait(false);
             if (acquired)
             {
@@ -228,8 +243,6 @@ public sealed class SyncService : IDisposable
                 Logger.Log("SyncService", "Tick skipped (previous cycle still running)");
             }
 
-            // Inter-tick sleep — cancellation throws OperationCanceledException which
-            // we catch to break out of the loop cleanly.
             try
             {
                 await Task.Delay(this._interval, ct).ConfigureAwait(false);
@@ -244,14 +257,13 @@ public sealed class SyncService : IDisposable
     /* ======================================================================================
      * RunCycleAsync
      * Description: One end-to-end discovery pass:
-     *                1. fetch origin (best-effort — partial cycle still useful)
-     *                2. discover branches
-     *                3. ensure team-members/{member}/{branch}/ folders
-     *                4. merge new member names into config.local.json
+     *                1. Pull all rows from Supabase via TeamMemberDiscovery
+     *                2. Merge unique member names into config.local.json (self filtered
+     *                   out inside ConfigStore)
      *              All failures are caught and packed into the returned SyncCycleResult,
      *              so the loop above can report and continue without dying.
      * Parameters:
-     *   ct - cancellation token; propagates into git invocations
+     *   ct - cancellation token; propagates into HTTP call
      * Return Values:
      *   SyncCycleResult describing what happened this cycle.
      * ======================================================================================
@@ -260,49 +272,87 @@ public sealed class SyncService : IDisposable
     {
         try
         {
-            // Step 1: refresh remote refs. We do not abort the cycle on fetch failure
-            // because cached refs still allow folder/config maintenance against the
-            // last known state — better than skipping the whole tick.
-            GitResult fetchResult = await this._git.RunAsync(
-                this._userRepoPath,
-                new[] { "fetch", "origin", "--quiet" },
-                ct).ConfigureAwait(false);
-            bool fetchOk = fetchResult.Success;
-            if (!fetchOk)
+            // Step 1: register every known login in team_members. We pull profiles
+            // from GitHub (login, email, avatar_url) and upsert each — this is what
+            // populates the table with metadata. Sources of "known logins":
+            //   - Self from config (always upserted, even if alone)
+            //   - Every name in config.local.json["team-members"] (locally observed roster)
+            // The user is asking why their daemon should also push others: because
+            // GitHub profiles are public and one teammate running the daemon
+            // populates everyone's row, removing the chicken-and-egg of "nobody
+            // sees anyone until each individual runs their own daemon".
+            HandoffConfig snapshot = this._configStore.Read();
+            HashSet<string> knownLogins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrEmpty(snapshot.Self))
             {
-                Logger.Log("SyncService", "fetch failed (continuing): " + fetchResult.Stderr);
+                knownLogins.Add(snapshot.Self);
+            }
+            foreach (TeamMemberEntry entry in snapshot.TeamMembers)
+            {
+                if (!string.IsNullOrEmpty(entry.Name) && !ExcludedLogins.Contains(entry.Name))
+                {
+                    knownLogins.Add(entry.Name);
+                }
             }
 
-            // Step 2 + 3: walk for-each-ref and create folders. Discovery already
-            // tolerates missing/malformed lines internally, so an empty list here
-            // genuinely means "nothing to track" rather than "something broke".
-            IReadOnlyList<TeamBranch> branches = await this._discovery.DiscoverAsync(ct).ConfigureAwait(false);
-            this._discovery.EnsureFolders(branches);
+            if (this._supabase.IsConfigured())
+            {
+                foreach (string login in knownLogins)
+                {
+                    GitHubProfile? profile = await this._github
+                        .FetchProfileAsync(login, ct).ConfigureAwait(false);
 
-            // Step 4: merge unique member names into the roster (self filtered inside
-            // ConfigStore). Future daemon work (commit watching, summary write,
-            // push) plugs in here, before the result is reported.
-            IEnumerable<string> uniqueMembers = branches.Select(b => b.Member).Distinct();
-            HandoffConfig merged = this._configStore.MergeDiscoveredMembers(uniqueMembers);
+                    // For self, fall back to git config user.email when GitHub has
+                    // hidden it. For other logins, leave email null — we cannot
+                    // discover their email without authentication.
+                    string? email = profile?.Email;
+                    if (string.IsNullOrEmpty(email) && string.Equals(login, snapshot.Self, StringComparison.OrdinalIgnoreCase))
+                    {
+                        email = await TeamMemberDiscovery
+                            .GetGitUserEmailAsync(this._git, this._userRepoPath, ct)
+                            .ConfigureAwait(false);
+                    }
+
+                    // Avatar: prefer GitHub-returned URL (handles renames + custom uploads);
+                    // fall back to the login-based pattern when the API call failed.
+                    string avatar = !string.IsNullOrEmpty(profile?.AvatarUrl)
+                        ? profile!.AvatarUrl!
+                        : "https://github.com/" + login + ".png";
+
+                    TeamMember row = new TeamMember
+                    {
+                        Name = login,
+                        Email = email,
+                        AvatarUrl = avatar,
+                    };
+                    await this._supabase.UpsertTeamMemberAsync(row, ct).ConfigureAwait(false);
+                }
+            }
+
+            // Step 2: pull the roster (now includes everyone we just pushed).
+            IReadOnlyList<TeamMember> members = await this._discovery.DiscoverMembersAsync(ct).ConfigureAwait(false);
+            bool reachable = this._supabase.IsConfigured();
+
+            IEnumerable<string> uniqueNames = members.Select(m => m.Name).Where(n => !string.IsNullOrEmpty(n));
+            HandoffConfig merged = this._configStore.MergeDiscoveredMembers(uniqueNames);
 
             return new SyncCycleResult(
-                FetchSucceeded: fetchOk,
-                BranchesDiscovered: branches.Count,
+                SupabaseReachable: reachable,
+                RowsDiscovered: members.Count,
                 MembersTotal: merged.TeamMembers.Count,
                 CompletedAt: DateTime.Now,
                 ErrorMessage: null);
         }
         catch (OperationCanceledException)
         {
-            // Propagate cancellation up — the loop interprets it as "exit cleanly".
             throw;
         }
         catch (Exception ex)
         {
             Logger.LogError("SyncService", "Cycle", ex);
             return new SyncCycleResult(
-                FetchSucceeded: false,
-                BranchesDiscovered: 0,
+                SupabaseReachable: false,
+                RowsDiscovered: 0,
                 MembersTotal: 0,
                 CompletedAt: DateTime.Now,
                 ErrorMessage: ex.Message);
@@ -330,7 +380,6 @@ public sealed class SyncService : IDisposable
         try
         {
             this._cts?.Cancel();
-            // Bounded wait — we can't block indefinitely during disposal.
             this._runLoop?.Wait(TimeSpan.FromSeconds(5));
         }
         catch (Exception ex)

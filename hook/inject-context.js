@@ -5,7 +5,6 @@ const { spawnSync } = require('child_process');
 
 const HOOKS_DIR = __dirname;
 const REPO_ROOT = path.resolve(HOOKS_DIR, '..');
-const TEAM_CONTEXT_DIR = path.resolve(HOOKS_DIR, '../team-members');
 const CONFIG_PATH = path.join(REPO_ROOT, 'config.local.json');
 const WATERMARKS_PATH = path.join(REPO_ROOT, '.local', 'watermarks.json');
 const LOCK_PATH = path.join(REPO_ROOT, '.local', 'team-context-hook.lock');
@@ -16,7 +15,6 @@ const RECEIVER_EXE = path.join(
   'x64',
   'Debug',
   'net8.0-windows10.0.19041.0',
-  'win-x64',
   'Handoff.Receiver.exe'
 );
 const DEBUG_LOG = path.join(REPO_ROOT, '.local', 'team-context-debug.log');
@@ -74,42 +72,68 @@ function hashContent(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-function findNewSharedContexts(self, teamMembers, watermarks) {
+// Pulls every shared_contexts row via Supabase REST. We use curl (shipped on
+// Win10+) to keep this synchronous — hooks must complete fast and predictably,
+// and async/await would add a layer for no real gain at this scale.
+// Returns [] on any failure so the hook still exits cleanly.
+function fetchSharedContextsFromSupabase(supabase) {
+  if (!supabase || !supabase.url || !supabase.key) {
+    log('supabase config missing — fetch skipped');
+    return [];
+  }
+  const endpoint = `${supabase.url}/rest/v1/shared_contexts?select=*`;
+  const result = spawnSync('curl', [
+    '-s', '-S',
+    '-H', `apikey: ${supabase.key}`,
+    '-H', `Authorization: Bearer ${supabase.key}`,
+    '-H', 'Accept: application/json',
+    endpoint,
+  ], { encoding: 'utf8' });
+
+  if (result.status !== 0) {
+    log(`curl failed (status=${result.status}): ${result.stderr || ''}`);
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(result.stdout || '[]');
+    if (!Array.isArray(parsed)) {
+      log(`unexpected supabase payload: ${result.stdout.slice(0, 200)}`);
+      return [];
+    }
+    return parsed;
+  } catch (e) {
+    log(`failed to parse supabase response: ${e.message}`);
+    return [];
+  }
+}
+
+// Filters fetched rows by self-exclusion + subscribe flag, then compares each
+// row's content_hash against watermarks to find what's new for this user.
+// "key" matches the file-based version (member/branch) so existing
+// watermarks.json entries keep working without migration.
+function findNewSharedContexts(self, teamMembers, watermarks, rows) {
   const newItems = [];
-  if (!fs.existsSync(TEAM_CONTEXT_DIR)) return newItems;
+  for (const row of rows) {
+    if (!row || !row.member_name || !row.branch) continue;
+    if (self && row.member_name === self) continue;
 
-  const memberDirs = fs.readdirSync(TEAM_CONTEXT_DIR, { withFileTypes: true })
-    .filter(d => d.isDirectory() && !d.name.startsWith('.') && d.name !== self);
-
-  for (const memberDir of memberDirs) {
-    const member = memberDir.name;
-    // Find this member's roster entry. Missing entry → treat as subscribed
-    // (matches daemon's default for newly discovered members). Explicit
-    // subscribe:false → skip.
-    const entry = teamMembers.find(m => m && m.name === member);
+    // Missing roster entry => treated as subscribed (matches daemon's
+    // opt-out default for newly discovered members). Explicit subscribe:false
+    // is the only thing that filters a member out.
+    const entry = teamMembers.find(m => m && m.name === row.member_name);
     if (entry && entry.subscribe === false) continue;
 
-    const memberPath = path.join(TEAM_CONTEXT_DIR, member);
-    const branches = fs.readdirSync(memberPath, { withFileTypes: true })
-      .filter(d => d.isDirectory());
+    // Hash is computed client-side from the row JSON — the server no longer
+    // stores it. Stable across runs because we always serialize the same
+    // shape (System.Text.Json on the producer matches JSON.stringify here
+    // for the columns we read).
+    const hash = hashContent(JSON.stringify(row));
+    const key = `${row.member_name}/${row.branch}`;
 
-    for (const branchDir of branches) {
-      const branch = branchDir.name;
-      const sharedPath = path.join(memberPath, branch, 'shared-context.json');
-      if (!fs.existsSync(sharedPath)) continue;
-
-      const content = fs.readFileSync(sharedPath, 'utf8');
-      const hash = hashContent(content);
-      const key = `${member}/${branch}`;
-
-      if (watermarks[key] !== hash) {
-        let parsed = null;
-        try { parsed = JSON.parse(content); } catch (_) {}
-        newItems.push({ key, content, hash, parsed });
-      }
+    if (watermarks[key] !== hash) {
+      newItems.push({ key, hash, parsed: row });
     }
   }
-
   return newItems;
 }
 
@@ -146,14 +170,18 @@ try {
 
 log(`${event} fired`);
 
-const config = readJSON(CONFIG_PATH, { self: null, 'team-members': [] });
+const config = readJSON(CONFIG_PATH, { self: null, 'team-members': [], supabase: null });
 let watermarks = readJSON(WATERMARKS_PATH, {});
 
-const newItems = findNewSharedContexts(
-  config.self,
-  Array.isArray(config['team-members']) ? config['team-members'] : [],
-  watermarks
-);
+// One Supabase fetch per hook invocation, cached in `rows`. The post-lock
+// recheck uses the same snapshot — re-fetching after the lock would catch
+// rows pushed in the millisecond gap, but at the cost of doubling network
+// latency on the hot path. The watermark comparison itself still re-runs
+// (cheap) so we never inject a hash that another instance already consumed.
+const rows = fetchSharedContextsFromSupabase(config.supabase);
+const teamMembers = Array.isArray(config['team-members']) ? config['team-members'] : [];
+
+const newItems = findNewSharedContexts(config.self, teamMembers, watermarks, rows);
 
 if (newItems.length === 0) {
   log(`${event}: no new context — silent exit`);
@@ -169,11 +197,7 @@ if (lockHandle === null) {
 }
 
 watermarks = readJSON(WATERMARKS_PATH, {});
-const lockedNewItems = findNewSharedContexts(
-  config.self,
-  Array.isArray(config['team-members']) ? config['team-members'] : [],
-  watermarks
-);
+const lockedNewItems = findNewSharedContexts(config.self, teamMembers, watermarks, rows);
 
 if (lockedNewItems.length === 0) {
   log(`${event}: no new context after lock — silent exit`);
@@ -181,41 +205,54 @@ if (lockedNewItems.length === 0) {
   process.exit(0);
 }
 
-const preview = buildPreview(lockedNewItems);
+// Show ONE popup per new item so the user can Allow/Deny each member
+// independently. We accumulate the previews of items the user approved and
+// emit them at the end as a single combined injection — Claude Code only
+// reads stdout once per hook fire.
+const allowedPreviews = [];
 
-let result;
 try {
-  result = spawnSync(
-    RECEIVER_EXE,
-    [],
-    { input: preview, encoding: 'utf8' }
-  );
+  for (const item of lockedNewItems) {
+    const itemPreview = buildPreview([item]);
+
+    const result = spawnSync(
+      RECEIVER_EXE,
+      [],
+      { input: itemPreview, encoding: 'utf8' }
+    );
+    const code = result.status;
+    log(`${event}: gate (${item.key}) exited with code ${code}`);
+    if (result.error) {
+      log(`${event}: gate (${item.key}) error: ${result.error.message}`);
+    }
+    if (result.signal) {
+      log(`${event}: gate (${item.key}) signal: ${result.signal}`);
+    }
+    if (result.stderr) {
+      log(`${event}: gate (${item.key}) stderr: ${result.stderr.trim()}`);
+    }
+
+    // Rotate-on-suggest: advance the watermark on Allow (0) AND Deny (1) so
+    // the same content never re-prompts the user. Other exit codes (signal,
+    // crash, ENOENT) leave the watermark untouched so the next fire retries.
+    if (code === 0 || code === 1) {
+      watermarks[item.key] = item.hash;
+    } else {
+      log(`${event}: gate (${item.key}) did not finish cleanly — watermark unchanged`);
+    }
+
+    if (code === 0) {
+      allowedPreviews.push(itemPreview);
+    }
+  }
 } finally {
+  // Persist watermark progress even if a mid-loop crash happened — we don't
+  // want a single bad gate to invalidate the user's prior Allow/Deny clicks.
+  writeJSON(WATERMARKS_PATH, watermarks);
   releaseLock(lockHandle);
 }
 
-const code = result.status;
-log(`${event}: gate exited with code ${code}`);
-if (result.error) {
-  log(`${event}: gate error: ${result.error.message}`);
-}
-if (result.signal) {
-  log(`${event}: gate signal: ${result.signal}`);
-}
-if (result.stderr) {
-  log(`${event}: gate stderr: ${result.stderr.trim()}`);
-}
-
-if (code === 0 || code === 1) {
-  for (const item of lockedNewItems) {
-    watermarks[item.key] = item.hash;
-  }
-  writeJSON(WATERMARKS_PATH, watermarks);
-} else {
-  log(`${event}: gate did not finish cleanly — watermark unchanged`);
-}
-
-if (code === 0) {
-  process.stdout.write(preview);
+if (allowedPreviews.length > 0) {
+  process.stdout.write(allowedPreviews.join('\n\n---\n\n'));
 }
 process.exit(0);

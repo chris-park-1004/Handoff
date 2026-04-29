@@ -1,35 +1,7 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using Handoff.WinUI.Models;
 
 namespace Handoff.WinUI.Services;
-
-/// <summary>
-/// One row in config.local.json's "team-members" array.
-/// Mutable so ConfigStore can flip Subscribe in-place during a merge if needed.
-/// </summary>
-public sealed class TeamMemberEntry
-{
-    [JsonPropertyName("name")]
-    public string Name { get; set; } = "";
-
-    [JsonPropertyName("subscribe")]
-    public bool Subscribe { get; set; }
-}
-
-/// <summary>
-/// Top-level shape of config.local.json. Self is the user's own normalized
-/// member name; TeamMembers is the discovered roster with per-entry subscribe
-/// toggles. Default-constructed instance ("", []) is the safe empty state used
-/// when the file is missing or unreadable.
-/// </summary>
-public sealed class HandoffConfig
-{
-    [JsonPropertyName("self")]
-    public string Self { get; set; } = "";
-
-    [JsonPropertyName("team-members")]
-    public List<TeamMemberEntry> TeamMembers { get; set; } = new List<TeamMemberEntry>();
-}
 
 public sealed class ConfigStore
 {
