@@ -1,32 +1,62 @@
+using System.Collections.ObjectModel;
+using System.Runtime.InteropServices;
 using Handoff.WinUI.Services;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using WinRT.Interop;
 
 namespace Handoff.WinUI;
 
 public sealed partial class MainWindow : Window
 {
-    // Owned by the window for now. Will move to App.xaml.cs once we add tray /
-    // background-survives-close semantics, per the agreed migration plan.
+    private const int MinimumWindowWidth = 1100;
+    private const int MinimumWindowHeight = 720;
+    private const uint MinimumSizeSubclassId = 1;
+    private const uint WmGetMinMaxInfo = 0x0024;
+
+    // Owned by the window for now. Will move to App.xaml.cs once tray /
+    // background-survives-close semantics are added.
     private SyncService? _syncService;
+    private ConfigStore? _configStore;
+    private string? _repoRoot;
+    private IntPtr _hwnd;
+    private SubclassProc? _minimumSizeSubclassProc;
+
+    private readonly ObservableCollection<string> _members = new ObservableCollection<string>();
+    private readonly ObservableCollection<BranchListRow> _branches = new ObservableCollection<BranchListRow>();
+
+    [DllImport("Comctl32.dll", SetLastError = true)]
+    private static extern bool SetWindowSubclass(
+        IntPtr hwnd,
+        SubclassProc subclassProc,
+        UIntPtr subclassId,
+        UIntPtr refData);
+
+    [DllImport("Comctl32.dll", SetLastError = true)]
+    private static extern bool RemoveWindowSubclass(
+        IntPtr hwnd,
+        SubclassProc subclassProc,
+        UIntPtr subclassId);
+
+    [DllImport("Comctl32.dll", SetLastError = true)]
+    private static extern IntPtr DefSubclassProc(
+        IntPtr hwnd,
+        uint message,
+        UIntPtr wParam,
+        IntPtr lParam);
 
     public MainWindow()
     {
         this.InitializeComponent();
+        this.ExtendsContentIntoTitleBar = true;
+        this.SetTitleBar(this.AppTitleBar);
+        this.ConfigureMinimumWindowSize();
+        this.MembersList.ItemsSource = this._members;
+        this.BranchesList.ItemsSource = this._branches;
         this.Closed += this.OnWindowClosed;
         this.StartSyncService();
     }
 
-    /* ======================================================================================
-     * StartSyncService
-     * Description: Builds the daemon's collaborators (GitProcess, ConfigStore) against
-     *              the discovered repo root, hooks up the CycleCompleted event for live
-     *              status, and kicks off the polling loop. Failures here are surfaced
-     *              into StatusText rather than thrown — a missing .git or filesystem
-     *              error should not crash the window before the user can see why.
-     * Parameters: (none)
-     * Return Values: (none)
-     * ======================================================================================
-     */
     private void StartSyncService()
     {
         try
@@ -36,85 +66,120 @@ public sealed partial class MainWindow : Window
             string configPath = Path.Combine(repoRoot, "config.local.json");
             string logPath = Path.Combine(repoRoot, ".local", "daemon.log");
 
+            this._repoRoot = repoRoot;
+            this.RepoPathText.Text = repoRoot;
+
             Logger.Configure(logPath);
 
             GitProcess git = new GitProcess();
             ConfigStore configStore = new ConfigStore(configPath);
+            this._configStore = configStore;
 
             this._syncService = new SyncService(git, configStore, repoRoot, teamMembersPath);
             this._syncService.CycleCompleted += this.OnSyncCycleCompleted;
             this._syncService.Start();
 
-            this.StatusText.Text = "Daemon started. First cycle running...";
+            this.LoadWorkspaceConfig();
+            this.SetStatus("Daemon started", "First sync cycle is running.", InfoBarSeverity.Informational);
+            this.SyncProgress.IsActive = true;
         }
         catch (Exception ex)
         {
-            // The daemon failed to start. Discover button still works as a manual fallback,
-            // so we surface the error but keep the window usable.
-            this.StatusText.Text = "Failed to start daemon: " + ex.GetType().Name + ": " + ex.Message;
+            this.SetStatus(
+                "Failed to start daemon",
+                ex.GetType().Name + ": " + ex.Message,
+                InfoBarSeverity.Error);
+            this.SyncProgress.IsActive = false;
         }
     }
 
-    /* ======================================================================================
-     * OnSyncCycleCompleted
-     * Description: CycleCompleted handler — fires from a background thread, so we
-     *              must marshal back to the UI thread before touching XAML elements.
-     *              Renders a one-line status of the cycle. Detailed output (member /
-     *              branch lists) stays in the manual Discover button for demo use.
-     * Parameters:
-     *   sender - the SyncService instance (unused)
-     *   result - the cycle's outcome
-     * Return Values: (none)
-     * ======================================================================================
-     */
     private void OnSyncCycleCompleted(object? sender, SyncCycleResult result)
     {
-        // Events from SyncService run on the thread pool. WinUI XAML can only be
-        // touched from the dispatcher thread — TryEnqueue marshals the update.
         this.DispatcherQueue.TryEnqueue(() =>
         {
             string timestamp = result.CompletedAt.ToString("HH:mm:ss");
+            this.LastSyncText.Text = timestamp;
+            this.BranchCountText.Text = result.BranchesDiscovered.ToString();
+            this.MemberCountText.Text = result.MembersTotal.ToString();
+            this.FetchStatusText.Text = result.FetchSucceeded ? "Current" : "Cached refs";
+            this.SyncProgress.IsActive = false;
+            this.LoadWorkspaceConfig();
+
             if (result.HadError)
             {
-                this.StatusText.Text = "Sync error at " + timestamp + ": " + result.ErrorMessage;
+                this.SetStatus(
+                    "Sync error at " + timestamp,
+                    result.ErrorMessage ?? "Unknown sync failure.",
+                    InfoBarSeverity.Error);
                 return;
             }
 
             string fetchSuffix = result.FetchSucceeded
                 ? string.Empty
-                : " (fetch warning, used cached refs)";
-            this.StatusText.Text =
-                "Sync at " + timestamp + " - "
-                + result.BranchesDiscovered + " branches, "
-                + result.MembersTotal + " members"
-                + fetchSuffix;
+                : " Fetch failed, so cached refs were used.";
+            this.SetStatus(
+                "Sync complete",
+                result.BranchesDiscovered + " branches, "
+                + result.MembersTotal + " members."
+                + fetchSuffix,
+                result.FetchSucceeded ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
         });
     }
 
-    /* ======================================================================================
-     * OnWindowClosed
-     * Description: Stops and disposes the daemon when the window is closed. Async-void
-     *              is the standard pattern for event handlers; the loop's StopAsync
-     *              completes within a few seconds (bounded by the cycle's git work).
-     * Parameters:
-     *   sender - the window (unused)
-     *   args   - close event args (unused)
-     * Return Values: (async void event handler — no return)
-     * ======================================================================================
-     */
+    private void ConfigureMinimumWindowSize()
+    {
+        this._hwnd = WindowNative.GetWindowHandle(this);
+        this._minimumSizeSubclassProc = this.MinimumSizeWindowProc;
+        SetWindowSubclass(
+            this._hwnd,
+            this._minimumSizeSubclassProc,
+            new UIntPtr(MinimumSizeSubclassId),
+            UIntPtr.Zero);
+    }
+
+    private IntPtr MinimumSizeWindowProc(
+        IntPtr hwnd,
+        uint message,
+        UIntPtr wParam,
+        IntPtr lParam,
+        UIntPtr subclassId,
+        UIntPtr refData)
+    {
+        if (message == WmGetMinMaxInfo)
+        {
+            MinMaxInfo info = Marshal.PtrToStructure<MinMaxInfo>(lParam);
+            info.MinTrackSize.X = MinimumWindowWidth;
+            info.MinTrackSize.Y = MinimumWindowHeight;
+            Marshal.StructureToPtr(info, lParam, false);
+            return IntPtr.Zero;
+        }
+
+        return DefSubclassProc(hwnd, message, wParam, lParam);
+    }
+
     private async void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        if (this._hwnd != IntPtr.Zero && this._minimumSizeSubclassProc is not null)
+        {
+            RemoveWindowSubclass(
+                this._hwnd,
+                this._minimumSizeSubclassProc,
+                new UIntPtr(MinimumSizeSubclassId));
+            this._minimumSizeSubclassProc = null;
+            this._hwnd = IntPtr.Zero;
+        }
+
         if (this._syncService is null)
         {
             return;
         }
+
         try
         {
             await this._syncService.StopAsync();
         }
         catch (Exception ex)
         {
-            // Window is closing — nowhere to surface this. Log and swallow.
             Logger.LogError("MainWindow", "StopAsync during close", ex);
         }
         finally
@@ -124,83 +189,51 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /* ======================================================================================
-     * FindRepoRoot
-     * Description: Walks up from the exe's BaseDirectory looking for a directory that
-     *              contains a ".git" entry, returning the first match. This is more
-     *              robust than a fixed `..\..\..\..` style relative path because the
-     *              depth changes with build configuration (Debug/Release/RID/framework
-     *              folder), and a friend's machine with a different config would break
-     *              a hardcoded depth.
-     * Parameters: (none)
-     * Return Values:
-     *   Absolute path to the repo root (parent directory of the .git entry).
-     *   Throws DirectoryNotFoundException when no .git is found above the exe.
-     * ======================================================================================
-     */
     private static string FindRepoRoot()
     {
         DirectoryInfo? dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir != null)
         {
-            // .git is a directory in normal repos; in worktrees it is a file. Either is enough
-            // to identify the repo root, so we accept both forms.
             string gitPath = Path.Combine(dir.FullName, ".git");
             if (Directory.Exists(gitPath) || File.Exists(gitPath))
             {
                 return dir.FullName;
             }
+
             dir = dir.Parent;
         }
+
         throw new DirectoryNotFoundException("No .git found above exe at " + AppContext.BaseDirectory);
     }
 
-    /* ======================================================================================
-     * DiscoverButton_Click
-     * Description: Manual on-demand sync — kept for demo & debug. Runs one cycle through
-     *              SyncService.RunOnceAsync so the same SemaphoreSlim guard applies and
-     *              we never race the auto-tick. After the cycle completes, this handler
-     *              also reads the now-merged config and renders a detailed dump (member
-     *              list, branch list) into StatusText — info the periodic cycle would
-     *              otherwise summarize into a single line.
-     * Parameters:
-     *   sender - the Discover button (unused)
-     *   e      - routed event args (unused)
-     * Return Values: (async void event handler — no return)
-     * ======================================================================================
-     */
     private async void DiscoverButton_Click(object sender, RoutedEventArgs e)
     {
         this.DiscoverButton.IsEnabled = false;
-        this.StatusText.Text = "Manual sync...";
+        this.SyncProgress.IsActive = true;
+        this.SetStatus("Manual sync", "Discovering team members and branches.", InfoBarSeverity.Informational);
 
         try
         {
             if (this._syncService is null)
             {
-                this.StatusText.Text = "Daemon not running — see startup error above.";
+                this.SetStatus("Daemon not running", "See the startup error above.", InfoBarSeverity.Error);
                 return;
             }
 
-            // Run via the daemon's gate so the auto-tick and this manual run cannot
-            // both touch git/config simultaneously. RunOnceAsync returns null when a
-            // cycle is already in flight — surface that to the user as "busy".
             SyncCycleResult? result = await this._syncService.RunOnceAsync();
             if (result is null)
             {
-                this.StatusText.Text = "Auto-cycle in progress — try again in a moment.";
-                return;
-            }
-            if (result.HadError)
-            {
-                this.StatusText.Text = "Sync error: " + result.ErrorMessage;
+                this.SetStatus("Sync busy", "Auto-cycle in progress. Try again in a moment.", InfoBarSeverity.Warning);
                 return;
             }
 
-            // Read the now-merged config + repeat discovery to produce the detailed
-            // dump. Yes this is a second discovery pass, but it is cheap (just for-each-ref,
-            // no fetch) and gives us the full per-branch info the periodic cycle drops.
-            string repoRoot = FindRepoRoot();
+            if (result.HadError)
+            {
+                this.SetStatus("Sync error", result.ErrorMessage ?? "Unknown sync failure.", InfoBarSeverity.Error);
+                return;
+            }
+
+            string repoRoot = this._repoRoot ?? FindRepoRoot();
             string teamMembersPath = Path.Combine(repoRoot, "team-members");
             string configPath = Path.Combine(repoRoot, "config.local.json");
 
@@ -211,29 +244,120 @@ public sealed partial class MainWindow : Window
             IReadOnlyList<TeamBranch> branches = await discovery.DiscoverAsync();
             HandoffConfig merged = configStore.Read();
 
-            string memberLines = string.Join(
-                "\n",
-                merged.TeamMembers.Select(m => "  - " + m.Name + " (subscribe=" + m.Subscribe + ")"));
-            string branchLines = string.Join(
-                "\n",
-                branches.Select(b => "  - " + b.Member + "/" + b.Branch + "  [" + b.LastCommitSha + "]"));
-
-            this.StatusText.Text =
-                "repo: " + repoRoot + "\n" +
-                "self: " + merged.Self + "\n" +
-                "discovered " + branches.Count + " branches across " + merged.TeamMembers.Count + " members.\n\n" +
-                "members:\n" + memberLines + "\n\n" +
-                "branches:\n" + branchLines;
+            this.RenderDiscoveryDetails(merged, branches);
+            this.SetStatus(
+                "Discovery complete",
+                "Found " + branches.Count + " branches across " + merged.TeamMembers.Count + " members.",
+                result.FetchSucceeded ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
         }
         catch (Exception ex)
         {
-            // Catch-all — the test button must surface failures to the UI rather
-            // than crash the app or silently swallow them.
-            this.StatusText.Text = "Error: " + ex.GetType().Name + ": " + ex.Message;
+            this.SetStatus("Discovery failed", ex.GetType().Name + ": " + ex.Message, InfoBarSeverity.Error);
         }
         finally
         {
+            this.SyncProgress.IsActive = false;
             this.DiscoverButton.IsEnabled = true;
         }
     }
+
+    private void LoadWorkspaceConfig()
+    {
+        HandoffConfig? config = this._configStore?.Read();
+        if (config is null)
+        {
+            return;
+        }
+
+        this.RenderMembers(config);
+    }
+
+    private void RenderDiscoveryDetails(HandoffConfig config, IReadOnlyList<TeamBranch> branches)
+    {
+        this.RenderMembers(config);
+        this.RepoPathText.Text = this._repoRoot ?? FindRepoRoot();
+        this.BranchCountText.Text = branches.Count.ToString();
+        this.MemberCountText.Text = config.TeamMembers.Count.ToString();
+
+        this._branches.Clear();
+        foreach (TeamBranch branch in branches
+            .OrderBy(b => b.Member, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(b => b.Branch, StringComparer.OrdinalIgnoreCase))
+        {
+            this._branches.Add(new BranchListRow(
+                branch.Member + "/" + branch.Branch,
+                branch.OriginalBranch + " - " + branch.LastCommitSha + " - " + branch.LastCommitDate));
+        }
+    }
+
+    private void RenderMembers(HandoffConfig config)
+    {
+        this.SelfText.Text = string.IsNullOrWhiteSpace(config.Self) ? "Not set" : config.Self;
+
+        this._members.Clear();
+        foreach (TeamMemberEntry member in config.TeamMembers.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            string suffix = member.Subscribe ? " (subscribed)" : " (muted)";
+            this._members.Add(member.Name + suffix);
+        }
+    }
+
+    private void ShellNavigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    {
+        string? tag = (args.SelectedItem as NavigationViewItem)?.Tag as string;
+        this.ContentRoot.Visibility = tag == "dashboard" ? Visibility.Visible : Visibility.Collapsed;
+        this.TeamRoot.Visibility = tag == "team" ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void SetStatus(string title, string message, InfoBarSeverity severity)
+    {
+        this.StatusInfoBar.Title = title;
+        this.StatusInfoBar.Message = message;
+        this.StatusInfoBar.Severity = severity;
+        this.StatusInfoBar.IsOpen = true;
+        this.StatusText.Text = title + ": " + message;
+    }
+}
+
+public sealed class BranchListRow
+{
+    public BranchListRow(string title, string subtitle)
+    {
+        this.Title = title;
+        this.Subtitle = subtitle;
+    }
+
+    public string Title { get; }
+
+    public string Subtitle { get; }
+}
+
+internal delegate IntPtr SubclassProc(
+    IntPtr hwnd,
+    uint message,
+    UIntPtr wParam,
+    IntPtr lParam,
+    UIntPtr subclassId,
+    UIntPtr refData);
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct Point
+{
+    public int X;
+
+    public int Y;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct MinMaxInfo
+{
+    public Point Reserved;
+
+    public Point MaxSize;
+
+    public Point MaxPosition;
+
+    public Point MinTrackSize;
+
+    public Point MaxTrackSize;
 }
