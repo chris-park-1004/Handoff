@@ -13,7 +13,7 @@ claude-statusline.json
 CLAUDE.md
 
 # OS noise
-.DS_Storec
+.DS_Store
 Thumbs.db
 
 # .NET / Visual Studio local files
