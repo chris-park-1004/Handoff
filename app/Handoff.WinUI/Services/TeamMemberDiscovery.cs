@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.RegularExpressions;
 
 namespace Handoff.WinUI.Services;
@@ -107,7 +106,7 @@ public sealed class TeamMemberDiscovery
         GitResult result = await this._git.RunAsync(this._userRepoPath, args, ct).ConfigureAwait(false);
         if (!result.Success)
         {
-            Debug.WriteLine($"[Discovery] for-each-ref failed (exit={result.ExitCode}): {result.Stderr}");
+            Logger.Log("Discovery", "for-each-ref failed (exit=" + result.ExitCode + "): " + result.Stderr);
             return Array.Empty<TeamBranch>();
         }
 
@@ -128,7 +127,7 @@ public sealed class TeamMemberDiscovery
             {
                 // A single malformed line must not kill the whole discovery cycle —
                 // the daemon would lose track of every other teammate over one bad row.
-                Debug.WriteLine($"[Discovery] Failed to parse line '{line}': {ex.Message}");
+                Logger.LogError("Discovery", "ParseLine '" + line + "'", ex);
             }
         }
         return branches;
@@ -160,7 +159,7 @@ public sealed class TeamMemberDiscovery
             {
                 // One bad path (permissions, invalid chars on disk, drive missing)
                 // shouldn't stop folders for the other branches.
-                Debug.WriteLine($"[Discovery] CreateDirectory failed for '{folderPath}': {ex.Message}");
+                Logger.LogError("Discovery", "CreateDirectory '" + folderPath + "'", ex);
             }
         }
     }

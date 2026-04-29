@@ -54,6 +54,11 @@ public sealed class GitProcess
             psi.ArgumentList.Add(arg);
         }
 
+        // Build a printable form of the invocation up-front so log lines on success
+        // and failure share the same identifier (helps when grepping the log).
+        string invocation = "git " + string.Join(' ', args);
+        Logger.Log("git", "Invoke: " + invocation + "  (cwd=" + workingDirectory + ")");
+
         Process? proc = null;
         try
         {
@@ -61,7 +66,7 @@ public sealed class GitProcess
             if (proc is null)
             {
                 // Process.Start returns null only when no new process is started — rare.
-                Debug.WriteLine($"[GitProcess] Process.Start returned null for: git {string.Join(' ', args)}");
+                Logger.Log("git", "Process.Start returned null for: " + invocation);
                 return new GitResult(-1, string.Empty, "Process.Start returned null");
             }
 
@@ -75,6 +80,18 @@ public sealed class GitProcess
 
             string stdout = await stdoutTask.ConfigureAwait(false);
             string stderr = await stderrTask.ConfigureAwait(false);
+
+            // Result line — exit code on every call; stderr only when the call
+            // failed, so the log stays compact for the steady-state success path.
+            if (proc.ExitCode == 0)
+            {
+                Logger.Log("git", "Exit 0: " + invocation);
+            }
+            else
+            {
+                Logger.Log("git", "Exit " + proc.ExitCode + ": " + invocation
+                    + (string.IsNullOrWhiteSpace(stderr) ? string.Empty : "  stderr=" + stderr.Trim()));
+            }
 
             return new GitResult(proc.ExitCode, stdout, stderr);
         }
@@ -91,6 +108,7 @@ public sealed class GitProcess
             {
                 // Already on a cancellation path — swallow.
             }
+            Logger.Log("git", "Cancelled: " + invocation);
             throw;
         }
         catch (Exception ex)
@@ -100,7 +118,7 @@ public sealed class GitProcess
             // Per the chosen error policy, invocation errors are RETURNED with
             // ExitCode == -1, not thrown — so the polling loop's other steps
             // can keep running this tick.
-            Debug.WriteLine($"[GitProcess] Invocation failed: {ex.GetType().Name}: {ex.Message}");
+            Logger.LogError("git", invocation, ex);
             return new GitResult(-1, string.Empty, ex.Message);
         }
         finally

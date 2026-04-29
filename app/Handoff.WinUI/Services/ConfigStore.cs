@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -63,6 +62,21 @@ public sealed class ConfigStore
         this._configPath = configPath;
     }
 
+    /* ======================================================================================
+     * Exists
+     * Description: Returns whether the config file currently exists on disk. Cheap check
+     *              used by SyncService to decide whether to run the first-run bootstrap.
+     *              Does not open the file or parse JSON.
+     * Parameters: (none)
+     * Return Values:
+     *   true if the config file exists at the bound path; false otherwise.
+     * ======================================================================================
+     */
+    public bool Exists()
+    {
+        return File.Exists(this._configPath);
+    }
+
     /* ============================================================================
      * EnsureExists
      * Description: Creates the config file with default values when missing.
@@ -89,6 +103,8 @@ public sealed class ConfigStore
             Self = defaultSelf ?? string.Empty,
         };
         this.Write(config);
+        Logger.Log("ConfigStore", "Created config at " + this._configPath
+            + " with self=" + (string.IsNullOrEmpty(config.Self) ? "(empty)" : config.Self));
     }
 
     /* ==========================================================================
@@ -108,7 +124,7 @@ public sealed class ConfigStore
         {
             if (!File.Exists(this._configPath))
             {
-                Debug.WriteLine($"[ConfigStore] Not found, returning defaults: {this._configPath}");
+                Logger.Log("ConfigStore", "Not found, returning defaults: " + this._configPath);
                 return new HandoffConfig();
             }
 
@@ -122,7 +138,7 @@ public sealed class ConfigStore
             // Malformed JSON, IO error, etc. Logged but never propagated, since the
             // daemon's other steps must continue this tick (and a self-healing read
             // happens on the next cycle).
-            Debug.WriteLine($"[ConfigStore] Read failed: {ex.GetType().Name}: {ex.Message}");
+            Logger.LogError("ConfigStore", "Read " + this._configPath, ex);
             return new HandoffConfig();
         }
     }
@@ -146,7 +162,7 @@ public sealed class ConfigStore
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[ConfigStore] Write failed: {ex.GetType().Name}: {ex.Message}");
+            Logger.LogError("ConfigStore", "Write " + this._configPath, ex);
         }
     }
 
@@ -176,6 +192,10 @@ public sealed class ConfigStore
             config.TeamMembers.Select(m => m.Name),
             StringComparer.OrdinalIgnoreCase);
 
+        // Track names that were actually added this call so the log line is informative
+        // ("nothing changed" vs "added: alex-kim, bob-lee") instead of just a final count.
+        List<string> addedNames = new List<string>();
+
         foreach (string rawName in memberNames)
         {
             if (string.IsNullOrEmpty(rawName))
@@ -199,9 +219,21 @@ public sealed class ConfigStore
                 Subscribe = DefaultSubscribe,
             });
             existing.Add(rawName);
+            addedNames.Add(rawName);
         }
 
         this.Write(config);
+
+        if (addedNames.Count == 0)
+        {
+            Logger.Log("ConfigStore", "Merge: no new members (roster size=" + config.TeamMembers.Count + ")");
+        }
+        else
+        {
+            Logger.Log("ConfigStore", "Merge: added " + addedNames.Count + " (" + string.Join(", ", addedNames)
+                + "); roster size=" + config.TeamMembers.Count);
+        }
+
         return config;
     }
 }
