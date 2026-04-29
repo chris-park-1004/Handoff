@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Handoff.WinUI.Models;
 
 namespace Handoff.WinUI.Services;
 
@@ -41,34 +42,57 @@ public sealed class TeamMemberDiscovery
     }
 
     /* ======================================================================================
-     * DiscoverAsync
-     * Description: Pulls every shared_contexts row and converts each into a TeamBranch.
-     *              The roster is derived from the rows themselves — there is no separate
-     *              "members" table — so a member who has not yet pushed a context will
-     *              not appear here. That is intentional: the UI only needs to show
-     *              teammates whose context is actually available to consume.
+     * DiscoverMembersAsync
+     * Description: Pulls every row from team_members. This is the canonical roster
+     *              of teammates — a member shows up here as soon as the producer-side
+     *              daemon registers them, before any shared_contexts row exists, so the
+     *              UI can render an empty entry for someone who has just joined.
      * Parameters:
      *   ct - cancellation token; propagates into the HTTP call
      * Return Values:
-     *   IReadOnlyList<TeamBranch> with one entry per row. Empty list when the network
-     *   fails or no rows exist (the SupabaseClient logs the underlying failure).
+     *   IReadOnlyList<TeamMember> with one entry per row. Empty list on network failure.
      * ======================================================================================
      */
-    public async Task<IReadOnlyList<TeamBranch>> DiscoverAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<TeamMember>> DiscoverMembersAsync(CancellationToken ct = default)
     {
-        IReadOnlyList<SharedContextRow> rows = await this._supabase.SelectAllAsync(ct).ConfigureAwait(false);
-        List<TeamBranch> branches = new List<TeamBranch>(rows.Count);
-        foreach (SharedContextRow row in rows)
+        IReadOnlyList<TeamMember> rows = await this._supabase.SelectTeamMembersAsync(ct).ConfigureAwait(false);
+        List<TeamMember> members = new List<TeamMember>(rows.Count);
+        foreach (TeamMember row in rows)
         {
-            // Reject rows missing the keys we use as identity. PostgREST will not
-            // normally return such rows (NOT NULL on member, branch in schema),
-            // but defending against malformed data keeps the loop robust.
-            if (string.IsNullOrEmpty(row.Member) || string.IsNullOrEmpty(row.Branch))
+            // Defensive: PostgREST should never hand us a primary-key-empty row,
+            // but a malformed entry must not poison the whole roster.
+            if (string.IsNullOrEmpty(row.Name))
+            {
+                continue;
+            }
+            members.Add(row);
+        }
+        return members;
+    }
+
+    /* ======================================================================================
+     * DiscoverContextsAsync
+     * Description: Pulls every shared_contexts row and converts each into a TeamBranch.
+     *              Used for the manual Discover button to show "what context is available
+     *              right now" — the periodic cycle uses DiscoverMembersAsync instead.
+     * Parameters:
+     *   ct - cancellation token; propagates into the HTTP call
+     * Return Values:
+     *   IReadOnlyList<TeamBranch> with one entry per shared_contexts row.
+     * ======================================================================================
+     */
+    public async Task<IReadOnlyList<TeamBranch>> DiscoverContextsAsync(CancellationToken ct = default)
+    {
+        IReadOnlyList<SharedContext> rows = await this._supabase.SelectAllAsync(ct).ConfigureAwait(false);
+        List<TeamBranch> branches = new List<TeamBranch>(rows.Count);
+        foreach (SharedContext row in rows)
+        {
+            if (string.IsNullOrEmpty(row.MemberName) || string.IsNullOrEmpty(row.Branch))
             {
                 continue;
             }
             branches.Add(new TeamBranch(
-                Member: row.Member,
+                Member: row.MemberName,
                 Branch: row.Branch,
                 CommitSha: row.CommitSha,
                 CommitMessage: row.CommitMessage,
@@ -100,6 +124,37 @@ public sealed class TeamMemberDiscovery
         string lowered = s.Trim().ToLowerInvariant();
         string replaced = NonAlphanumericRun.Replace(lowered, "-");
         return replaced.Trim('-');
+    }
+
+    /* ======================================================================================
+     * GetGitUserEmailAsync
+     * Description: Reads `git config user.email` for the given repo. Used by the daemon
+     *              to populate the email column on the user's own team_members row.
+     *              Returns null on any failure (missing git, unset key) so the caller
+     *              can simply leave the column null rather than fail the cycle.
+     * Parameters:
+     *   git      - GitProcess wrapper for invoking git
+     *   repoPath - absolute path to the repo whose git config to read
+     *   ct       - cancellation token; propagates into the git invocation
+     * Return Values:
+     *   The email string when set; null otherwise.
+     * ======================================================================================
+     */
+    public static async Task<string?> GetGitUserEmailAsync(
+        GitProcess git,
+        string repoPath,
+        CancellationToken ct = default)
+    {
+        GitResult result = await git.RunAsync(
+            repoPath,
+            new[] { "config", "user.email" },
+            ct).ConfigureAwait(false);
+
+        if (!result.Success || string.IsNullOrWhiteSpace(result.Stdout))
+        {
+            return null;
+        }
+        return result.Stdout.Trim();
     }
 
     /* ======================================================================================

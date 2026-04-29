@@ -3,45 +3,9 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Handoff.WinUI.Models;
 
 namespace Handoff.WinUI.Services;
-
-/// <summary>
-/// One row from public.shared_contexts. Mirrors the schema agreed in the
-/// hackathon: identity (member, branch), latest commit fields for preview,
-/// content_hash for client-side watermarking, updated_at for freshness.
-/// JSON property names match the column names exactly so System.Text.Json
-/// can deserialize the REST payload directly.
-/// </summary>
-public sealed class SharedContextRow
-{
-    [JsonPropertyName("id")]
-    public long? Id { get; set; }
-
-    [JsonPropertyName("member")]
-    public string Member { get; set; } = "";
-
-    [JsonPropertyName("branch")]
-    public string Branch { get; set; } = "";
-
-    [JsonPropertyName("commit_sha")]
-    public string? CommitSha { get; set; }
-
-    [JsonPropertyName("commit_message")]
-    public string? CommitMessage { get; set; }
-
-    [JsonPropertyName("summary")]
-    public string? Summary { get; set; }
-
-    [JsonPropertyName("changed_files")]
-    public JsonElement? ChangedFiles { get; set; }
-
-    [JsonPropertyName("tags")]
-    public JsonElement? Tags { get; set; }
-
-    [JsonPropertyName("updated_at")]
-    public DateTime? UpdatedAt { get; set; }
-}
 
 public sealed class SupabaseClient : IDisposable
 {
@@ -53,6 +17,7 @@ public sealed class SupabaseClient : IDisposable
     //   - Content-Profile: public is implicit; left as default
     private const string RestRoot = "/rest/v1/";
     private const string SharedContextsTable = "shared_contexts";
+    private const string TeamMembersTable = "team_members";
 
     private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
     {
@@ -116,15 +81,15 @@ public sealed class SupabaseClient : IDisposable
      * Parameters:
      *   ct - cancellation token; propagates into the underlying HttpClient call
      * Return Values:
-     *   IReadOnlyList<SharedContextRow> with zero or more rows.
+     *   IReadOnlyList<SharedContext> with zero or more rows.
      * ===========================================================================================
      */
-    public async Task<IReadOnlyList<SharedContextRow>> SelectAllAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<SharedContext>> SelectAllAsync(CancellationToken ct = default)
     {
         if (!this.IsConfigured())
         {
             Logger.Log("Supabase", "SelectAll skipped: config not set");
-            return Array.Empty<SharedContextRow>();
+            return Array.Empty<SharedContext>();
         }
 
         try
@@ -137,11 +102,11 @@ public sealed class SupabaseClient : IDisposable
             if (!resp.IsSuccessStatusCode)
             {
                 Logger.Log("Supabase", "SelectAll non-2xx (" + (int)resp.StatusCode + "): " + Truncate(body, 300));
-                return Array.Empty<SharedContextRow>();
+                return Array.Empty<SharedContext>();
             }
 
-            List<SharedContextRow>? rows = JsonSerializer.Deserialize<List<SharedContextRow>>(body, JsonOptions);
-            return (IReadOnlyList<SharedContextRow>?)rows ?? Array.Empty<SharedContextRow>();
+            List<SharedContext>? rows = JsonSerializer.Deserialize<List<SharedContext>>(body, JsonOptions);
+            return (IReadOnlyList<SharedContext>?)rows ?? Array.Empty<SharedContext>();
         }
         catch (OperationCanceledException)
         {
@@ -151,7 +116,7 @@ public sealed class SupabaseClient : IDisposable
         catch (Exception ex)
         {
             Logger.LogError("Supabase", "SelectAll", ex);
-            return Array.Empty<SharedContextRow>();
+            return Array.Empty<SharedContext>();
         }
     }
 
@@ -170,7 +135,7 @@ public sealed class SupabaseClient : IDisposable
      *   recovers on the next tick).
      * ===========================================================================================
      */
-    public async Task<bool> UpsertAsync(SharedContextRow row, CancellationToken ct = default)
+    public async Task<bool> UpsertAsync(SharedContext row, CancellationToken ct = default)
     {
         if (!this.IsConfigured())
         {
@@ -206,6 +171,105 @@ public sealed class SupabaseClient : IDisposable
         catch (Exception ex)
         {
             Logger.LogError("Supabase", "Upsert", ex);
+            return false;
+        }
+    }
+
+    /* ===========================================================================================
+     * SelectTeamMembersAsync
+     * Description: Pulls every row from team_members. The roster table is the source of truth
+     *              for "who exists on this team" — separate from shared_contexts so a teammate
+     *              shows up in the UI even before they have pushed their first context. The
+     *              caller (TeamMemberDiscovery) feeds these into ConfigStore.MergeDiscoveredMembers
+     *              so subscription state in config.local.json stays in sync.
+     * Parameters:
+     *   ct - cancellation token; propagates into the HttpClient call
+     * Return Values:
+     *   IReadOnlyList<TeamMember> with zero or more rows. Empty list on any failure (logged).
+     * ===========================================================================================
+     */
+    public async Task<IReadOnlyList<TeamMember>> SelectTeamMembersAsync(CancellationToken ct = default)
+    {
+        if (!this.IsConfigured())
+        {
+            Logger.Log("Supabase", "SelectTeamMembers skipped: config not set");
+            return Array.Empty<TeamMember>();
+        }
+
+        try
+        {
+            string path = RestRoot + TeamMembersTable + "?select=*";
+            using HttpRequestMessage req = this.BuildRequest(HttpMethod.Get, path);
+            using HttpResponseMessage resp = await this._http.SendAsync(req, ct).ConfigureAwait(false);
+            string body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                Logger.Log("Supabase", "SelectTeamMembers non-2xx (" + (int)resp.StatusCode + "): " + Truncate(body, 300));
+                return Array.Empty<TeamMember>();
+            }
+
+            List<TeamMember>? rows = JsonSerializer.Deserialize<List<TeamMember>>(body, JsonOptions);
+            return (IReadOnlyList<TeamMember>?)rows ?? Array.Empty<TeamMember>();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("Supabase", "SelectTeamMembers", ex);
+            return Array.Empty<TeamMember>();
+        }
+    }
+
+    /* ===========================================================================================
+     * UpsertTeamMemberAsync
+     * Description: Inserts the given team_members row, or updates the existing row when the
+     *              primary key (name) already exists. Producer side calls this once per
+     *              cycle for the user's own identity, ensuring the FK target for any
+     *              shared_contexts insert is present. CreatedAt/UpdatedAt are server-managed
+     *              and ignored on the wire.
+     * Parameters:
+     *   member - row data; only Name is strictly required, the rest is optional metadata
+     *   ct     - cancellation token; propagates into HttpClient call
+     * Return Values:
+     *   true on 2xx; false on any failure (logged).
+     * ===========================================================================================
+     */
+    public async Task<bool> UpsertTeamMemberAsync(TeamMember member, CancellationToken ct = default)
+    {
+        if (!this.IsConfigured())
+        {
+            Logger.Log("Supabase", "UpsertTeamMember skipped: config not set");
+            return false;
+        }
+
+        try
+        {
+            string path = RestRoot + TeamMembersTable;
+            string json = JsonSerializer.Serialize(member, JsonOptions);
+
+            using HttpRequestMessage req = this.BuildRequest(HttpMethod.Post, path);
+            req.Content = new StringContent(json, Encoding.UTF8, "application/json");
+            req.Headers.TryAddWithoutValidation("Prefer", "resolution=merge-duplicates,return=minimal");
+
+            using HttpResponseMessage resp = await this._http.SendAsync(req, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                string body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                Logger.Log("Supabase", "UpsertTeamMember non-2xx (" + (int)resp.StatusCode + "): " + Truncate(body, 300));
+                return false;
+            }
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("Supabase", "UpsertTeamMember", ex);
             return false;
         }
     }

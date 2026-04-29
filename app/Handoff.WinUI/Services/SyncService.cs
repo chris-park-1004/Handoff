@@ -1,3 +1,5 @@
+using Handoff.WinUI.Models;
+
 namespace Handoff.WinUI.Services;
 
 /// <summary>
@@ -26,6 +28,7 @@ public sealed class SyncService : IDisposable
     private readonly GitProcess _git;
     private readonly ConfigStore _configStore;
     private readonly SupabaseClient _supabase;
+    private readonly GitHubClient _github;
     private readonly TeamMemberDiscovery _discovery;
     private readonly string _userRepoPath;
     private readonly TimeSpan _interval;
@@ -62,12 +65,14 @@ public sealed class SyncService : IDisposable
         GitProcess git,
         ConfigStore configStore,
         SupabaseClient supabase,
+        GitHubClient github,
         string userRepoPath,
         TimeSpan? interval = null)
     {
         this._git = git;
         this._configStore = configStore;
         this._supabase = supabase;
+        this._github = github;
         this._userRepoPath = userRepoPath;
         this._discovery = new TeamMemberDiscovery(supabase);
         this._interval = interval ?? DefaultInterval;
@@ -256,18 +261,73 @@ public sealed class SyncService : IDisposable
     {
         try
         {
-            IReadOnlyList<TeamBranch> branches = await this._discovery.DiscoverAsync(ct).ConfigureAwait(false);
-            // SupabaseClient already swallows network failures and returns []. We treat
-            // a zero-row response as "reachable but empty" — only an exception thrown
-            // from this method (caught below) flips SupabaseReachable to false.
+            // Step 1: register every known login in team_members. We pull profiles
+            // from GitHub (login, email, avatar_url) and upsert each — this is what
+            // populates the table with metadata. Sources of "known logins":
+            //   - Self from config (always upserted, even if alone)
+            //   - Every name in config.local.json["team-members"] (locally observed roster)
+            // The user is asking why their daemon should also push others: because
+            // GitHub profiles are public and one teammate running the daemon
+            // populates everyone's row, removing the chicken-and-egg of "nobody
+            // sees anyone until each individual runs their own daemon".
+            HandoffConfig snapshot = this._configStore.Read();
+            HashSet<string> knownLogins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrEmpty(snapshot.Self))
+            {
+                knownLogins.Add(snapshot.Self);
+            }
+            foreach (TeamMemberEntry entry in snapshot.TeamMembers)
+            {
+                if (!string.IsNullOrEmpty(entry.Name))
+                {
+                    knownLogins.Add(entry.Name);
+                }
+            }
+
+            if (this._supabase.IsConfigured())
+            {
+                foreach (string login in knownLogins)
+                {
+                    GitHubProfile? profile = await this._github
+                        .FetchProfileAsync(login, ct).ConfigureAwait(false);
+
+                    // For self, fall back to git config user.email when GitHub has
+                    // hidden it. For other logins, leave email null — we cannot
+                    // discover their email without authentication.
+                    string? email = profile?.Email;
+                    if (string.IsNullOrEmpty(email) && string.Equals(login, snapshot.Self, StringComparison.OrdinalIgnoreCase))
+                    {
+                        email = await TeamMemberDiscovery
+                            .GetGitUserEmailAsync(this._git, this._userRepoPath, ct)
+                            .ConfigureAwait(false);
+                    }
+
+                    // Avatar: prefer GitHub-returned URL (handles renames + custom uploads);
+                    // fall back to the login-based pattern when the API call failed.
+                    string avatar = !string.IsNullOrEmpty(profile?.AvatarUrl)
+                        ? profile!.AvatarUrl!
+                        : "https://github.com/" + login + ".png";
+
+                    TeamMember row = new TeamMember
+                    {
+                        Name = login,
+                        Email = email,
+                        AvatarUrl = avatar,
+                    };
+                    await this._supabase.UpsertTeamMemberAsync(row, ct).ConfigureAwait(false);
+                }
+            }
+
+            // Step 2: pull the roster (now includes everyone we just pushed).
+            IReadOnlyList<TeamMember> members = await this._discovery.DiscoverMembersAsync(ct).ConfigureAwait(false);
             bool reachable = this._supabase.IsConfigured();
 
-            IEnumerable<string> uniqueMembers = branches.Select(b => b.Member).Distinct();
-            HandoffConfig merged = this._configStore.MergeDiscoveredMembers(uniqueMembers);
+            IEnumerable<string> uniqueNames = members.Select(m => m.Name).Where(n => !string.IsNullOrEmpty(n));
+            HandoffConfig merged = this._configStore.MergeDiscoveredMembers(uniqueNames);
 
             return new SyncCycleResult(
                 SupabaseReachable: reachable,
-                RowsDiscovered: branches.Count,
+                RowsDiscovered: members.Count,
                 MembersTotal: merged.TeamMembers.Count,
                 CompletedAt: DateTime.Now,
                 ErrorMessage: null);
