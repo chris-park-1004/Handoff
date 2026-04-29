@@ -1,0 +1,10 @@
+{
+  "commit_sha": "xyz789v2",
+  "author": "alex",
+  "timestamp": "2026-04-27T22:30:00Z",
+  "branch": "feature/payment",
+  "commit_message": "Wire up Stripe webhook handler",
+  "changed_files": ["src/payments/stripe.ts"],
+  "summary": "Stripe webhook endpoint validates signatures and dispatches to processors.",
+  "tags": ["payment", "integration"]
+}

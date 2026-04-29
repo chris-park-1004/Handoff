@@ -1,0 +1,1 @@
+This is the folder for Handoff Windows Application and Background service

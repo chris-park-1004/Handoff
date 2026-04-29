@@ -1,0 +1,15 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# .gitignore for the team-context branch (lives inside <repo>/.team-context/)
+# ─────────────────────────────────────────────────────────────────────────────
+# This file is committed to the team-context branch itself.
+# It controls what's shared with teammates via this branch.
+
+# Local-only settings + per-user flags (subscriptions, flags fields).
+# Each developer has their own — must not leak to teammates.
+config.local.json
+claude-statusline.json
+.team-context/.local/*
+
+# OS noise
+.DS_Storec
+Thumbs.db
