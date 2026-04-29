@@ -1,10 +1,12 @@
-using Handoff.WinUI.Services;
+using Handoff.WinUI.Pages;
 using Microsoft.UI.Xaml;
 
 namespace Handoff.WinUI;
 
 public partial class App : Application
 {
+    private Window? _window;
+
     public App()
     {
         InitializeComponent();
@@ -12,7 +14,7 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        NotificationService.ShowLatestTeamChange();
-        Exit();
+        _window = new SenderHostWindow();
+        _window.Activate();
     }
 }
