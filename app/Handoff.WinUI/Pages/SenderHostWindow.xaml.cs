@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -18,17 +17,6 @@ public sealed partial class SenderHostWindow : Window
         ConfigureWindow();
     }
 
-    private const int GWL_STYLE = -16;
-    private const long WS_OVERLAPPEDWINDOW = 0x00CF0000L;
-    private const long WS_POPUP = 0x80000000L;
-    private const long WS_VISIBLE = 0x10000000L;
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
-    private static extern nint GetWindowLongPtr(nint hWnd, int nIndex);
-
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
-    private static extern nint SetWindowLongPtr(nint hWnd, int nIndex, nint dwNewLong);
-
     private void ConfigureWindow()
     {
         var hwnd = WindowNative.GetWindowHandle(this);
@@ -37,10 +25,19 @@ public sealed partial class SenderHostWindow : Window
 
         appWindow.Title = "Handoff";
 
-        var style = (long)GetWindowLongPtr(hwnd, GWL_STYLE);
-        style &= ~WS_OVERLAPPEDWINDOW;
-        style |= WS_POPUP | WS_VISIBLE;
-        SetWindowLongPtr(hwnd, GWL_STYLE, (nint)style);
+        if (AppWindowTitleBar.IsCustomizationSupported())
+        {
+            ExtendsContentIntoTitleBar = true;
+            SetTitleBar(DragArea);
+        }
+
+        if (appWindow.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.IsResizable = true;
+            presenter.IsMaximizable = false;
+            presenter.IsMinimizable = false;
+            presenter.SetBorderAndTitleBar(true, false);
+        }
 
         var displayArea = DisplayArea.GetFromWindowId(windowId, DisplayAreaFallback.Nearest);
         var work = displayArea.WorkArea;
