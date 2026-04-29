@@ -7,6 +7,10 @@ namespace Handoff.WinUI.Services;
 
 public static class NotificationService
 {
+    private const string AppDisplayName = "Handoff";
+    private const int MaxCommitMessagePreviewLength = 90;
+    private const int MaxSummaryPreviewLength = 180;
+
     public static void ShowLatestTeamChange()
     {
         var teamDir = FindTeamDirectory();
@@ -26,6 +30,8 @@ public static class NotificationService
         {
             return;
         }
+
+        RegisterNotifications(latestChange);
 
         var notification = BuildNotification(latestChange);
 
@@ -81,20 +87,48 @@ public static class NotificationService
 
     private static AppNotification BuildNotification(TeamChange change)
     {
-        var displayTime = FormatCommitTime(change.CommitTime ?? change.FileLastWriteTime);
+        var timestamp = change.CommitTime ?? change.FileLastWriteTime;
         var notification = new AppNotificationBuilder()
             .SetDuration(AppNotificationDuration.Long)
-            .AddText($"{FormatName(change.Author)} changed {change.Branch}")
-            .AddText($"Time: {displayTime}{Environment.NewLine}Message: {change.CommitMessage}")
-            .AddText($"Summary: {change.Summary}{Environment.NewLine}Files: {FormatChangedFiles(change.ChangedFiles)}")
-            .SetAttributionText(FormatAttribution(change))
-            .SetTimeStamp(change.CommitTime ?? change.FileLastWriteTime)
+            .AddText(
+                FormatPreviewText(change.CommitMessage, MaxCommitMessagePreviewLength),
+                new AppNotificationTextProperties().SetMaxLines(1))
+            .AddText(
+                FormatPreviewText(change.Summary, MaxSummaryPreviewLength),
+                new AppNotificationTextProperties().SetMaxLines(3))
+            .SetAttributionText(FormatAttribution(change, timestamp))
+            .SetTimeStamp(timestamp)
             .BuildNotification();
 
         notification.Group = "team-changes";
         notification.Tag = "latest-team-change";
 
         return notification;
+    }
+
+    private static void RegisterNotifications(TeamChange change)
+    {
+        try
+        {
+            AppNotificationManager.Default.Register(
+                $"{AppDisplayName} - {FormatName(change.Author)}",
+                GetNotificationIconUri());
+        }
+        catch (Exception)
+        {
+            AppNotificationManager.Default.Register();
+        }
+    }
+
+    private static Uri GetNotificationIconUri()
+    {
+        var iconPath = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(iconPath) && File.Exists(iconPath))
+        {
+            return new Uri(iconPath);
+        }
+
+        return new Uri(Path.Combine(AppContext.BaseDirectory, $"{AppDisplayName}.WinUI.exe"));
     }
 
     private static string GetString(JsonElement root, string propertyName, string fallback)
@@ -158,11 +192,53 @@ public static class NotificationService
         };
     }
 
-    private static string FormatAttribution(TeamChange change)
+    private static string FormatAttribution(TeamChange change, DateTimeOffset timestamp)
     {
-        return string.IsNullOrWhiteSpace(change.CommitSha)
-            ? "Handoff team update"
-            : $"Commit: {change.CommitSha}";
+        return $"{FormatChangedFiles(change.ChangedFiles)} - {FormatCommitTime(timestamp)}";
+    }
+
+    private static string FormatPreviewText(string text, int maxLength)
+    {
+        var normalized = NormalizeWhitespace(text);
+        if (normalized.Length <= maxLength)
+        {
+            return normalized;
+        }
+
+        var cutoff = Math.Max(0, maxLength - 3);
+        var lastSpace = normalized.LastIndexOf(' ', cutoff);
+        if (lastSpace > maxLength / 2)
+        {
+            cutoff = lastSpace;
+        }
+
+        return normalized[..cutoff].TrimEnd() + "...";
+    }
+
+    private static string NormalizeWhitespace(string text)
+    {
+        var output = new char[text.Length];
+        var length = 0;
+        var previousWasWhitespace = false;
+
+        foreach (var character in text)
+        {
+            if (char.IsWhiteSpace(character))
+            {
+                if (!previousWasWhitespace)
+                {
+                    output[length++] = ' ';
+                    previousWasWhitespace = true;
+                }
+
+                continue;
+            }
+
+            output[length++] = character;
+            previousWasWhitespace = false;
+        }
+
+        return new string(output, 0, length).Trim();
     }
 
     private sealed record TeamChange(
