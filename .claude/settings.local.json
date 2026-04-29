@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .hooks/inject-context.js"
+            "command": "node hook/inject-context.js"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .hooks/inject-context.js"
+            "command": "node hook/inject-context.js"
           }
         ]
       }

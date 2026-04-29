@@ -8,12 +8,12 @@
 # Each developer has their own — must not leak to teammates.
 config.local.json
 claude-statusline.json
-team-members/.local/*
+.local/*
 .claude/
 CLAUDE.md
 
 # OS noise
-.DS_Storec
+.DS_Store
 Thumbs.db
 
 # .NET / Visual Studio local files
