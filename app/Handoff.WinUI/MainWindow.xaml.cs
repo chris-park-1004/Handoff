@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
+using Handoff.WinUI.Models;
 using Handoff.WinUI.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -17,6 +18,8 @@ public sealed partial class MainWindow : Window
     // Owned by the window for now. Will move to App.xaml.cs once tray /
     // background-survives-close semantics are added.
     private SyncService? _syncService;
+    private SupabaseClient? _supabase;
+    private GitHubClient? _github;
     private ConfigStore? _configStore;
     private string? _repoRoot;
     private IntPtr _hwnd;
@@ -62,7 +65,6 @@ public sealed partial class MainWindow : Window
         try
         {
             string repoRoot = FindRepoRoot();
-            string teamMembersPath = Path.Combine(repoRoot, "team-members");
             string configPath = Path.Combine(repoRoot, "config.local.json");
             string logPath = Path.Combine(repoRoot, ".local", "daemon.log");
 
@@ -75,7 +77,16 @@ public sealed partial class MainWindow : Window
             ConfigStore configStore = new ConfigStore(configPath);
             this._configStore = configStore;
 
-            this._syncService = new SyncService(git, configStore, repoRoot, teamMembersPath);
+            // SupabaseClient is built from whatever is currently in config.local.json.
+            // Empty url/key short-circuit to no-ops in the client itself, so a half-
+            // configured install still boots; the user just sees empty sync results.
+            HandoffConfig snapshot = configStore.Read();
+            string supabaseUrl = snapshot.Supabase?.Url ?? string.Empty;
+            string supabaseKey = snapshot.Supabase?.Key ?? string.Empty;
+            this._supabase = new SupabaseClient(supabaseUrl, supabaseKey);
+            this._github = new GitHubClient();
+
+            this._syncService = new SyncService(git, configStore, this._supabase, this._github, repoRoot);
             this._syncService.CycleCompleted += this.OnSyncCycleCompleted;
             this._syncService.Start();
 
@@ -95,13 +106,21 @@ public sealed partial class MainWindow : Window
 
     private void OnSyncCycleCompleted(object? sender, SyncCycleResult result)
     {
-        this.DispatcherQueue.TryEnqueue(() =>
+        // Marshal back to the UI thread before touching XAML. Inside the lambda we
+        // also fire-and-forget a contexts fetch; the daemon's RunCycleAsync only
+        // pulls team_members, so branches/shared_contexts have to be queried
+        // separately when the UI wants them.
+        this.DispatcherQueue.TryEnqueue(async () =>
         {
             string timestamp = result.CompletedAt.ToString("HH:mm:ss");
             this.LastSyncText.Text = timestamp;
-            this.BranchCountText.Text = result.BranchesDiscovered.ToString();
             this.MemberCountText.Text = result.MembersTotal.ToString();
-            this.FetchStatusText.Text = result.FetchSucceeded ? "Current" : "Cached refs";
+            // Branch count is overwritten below once the contexts fetch lands;
+            // showing the member-cycle's row count first would be misleading.
+            this.BranchCountText.Text = "...";
+            // The label still reads "Fetch" in XAML; we repurpose it as the Supabase
+            // reachability indicator since the legacy git fetch step no longer exists.
+            this.FetchStatusText.Text = result.SupabaseReachable ? "Current" : "Supabase unreachable";
             this.SyncProgress.IsActive = false;
             this.LoadWorkspaceConfig();
 
@@ -114,16 +133,68 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            string fetchSuffix = result.FetchSucceeded
+            string suffix = result.SupabaseReachable
                 ? string.Empty
-                : " Fetch failed, so cached refs were used.";
+                : " Supabase unreachable; using cached roster.";
             this.SetStatus(
                 "Sync complete",
-                result.BranchesDiscovered + " branches, "
-                + result.MembersTotal + " members."
-                + fetchSuffix,
-                result.FetchSucceeded ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
+                result.MembersTotal + " members."
+                + suffix,
+                result.SupabaseReachable ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
+
+            // Pull shared_contexts to render the branches panel. Failures fall
+            // through silently — the panel keeps its last-known content rather
+            // than blanking out on a transient Supabase blip.
+            await this.RefreshBranchesAsync();
         });
+    }
+
+    /* ======================================================================================
+     * RefreshBranchesAsync
+     * Description: Queries shared_contexts via the live SupabaseClient and renders the
+     *              result into the BranchesList. Called from the cycle-completed handler
+     *              so the panel updates automatically every 30s, not only on manual
+     *              Discover clicks. Errors are swallowed (logged via the inner client)
+     *              because this runs on the UI thread; we never want a refresh failure
+     *              to crash the window.
+     * Parameters: (none)
+     * Return Values:
+     *   Task that completes when the fetch + render is done.
+     * ======================================================================================
+     */
+    private async Task RefreshBranchesAsync()
+    {
+        if (this._supabase is null)
+        {
+            return;
+        }
+        try
+        {
+            TeamMemberDiscovery discovery = new TeamMemberDiscovery(this._supabase);
+            IReadOnlyList<TeamBranch> rows = await discovery.DiscoverContextsAsync();
+
+            this._branches.Clear();
+            foreach (TeamBranch row in rows
+                .OrderBy(r => r.Member, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(r => r.Branch, StringComparer.OrdinalIgnoreCase))
+            {
+                string sha = string.IsNullOrEmpty(row.CommitSha) ? "(no sha)" : row.CommitSha;
+                string ts = row.UpdatedAt.HasValue
+                    ? row.UpdatedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+                    : "(no timestamp)";
+                this._branches.Add(new BranchListRow(
+                    row.Member + "/" + row.Branch,
+                    sha + " - " + ts));
+            }
+
+            this.BranchCountText.Text = rows.Count.ToString();
+        }
+        catch (Exception ex)
+        {
+            // Swallow — the SupabaseClient already logged the underlying failure;
+            // the panel just keeps its previous state on this cycle.
+            Logger.LogError("MainWindow", "RefreshBranches", ex);
+        }
     }
 
     private void ConfigureMinimumWindowSize()
@@ -186,6 +257,12 @@ public sealed partial class MainWindow : Window
         {
             this._syncService.Dispose();
             this._syncService = null;
+            // SupabaseClient + GitHubClient each own an HttpClient — dispose alongside
+            // the daemon. After this returns the window has no live network resources.
+            this._supabase?.Dispose();
+            this._supabase = null;
+            this._github?.Dispose();
+            this._github = null;
         }
     }
 
@@ -234,21 +311,25 @@ public sealed partial class MainWindow : Window
             }
 
             string repoRoot = this._repoRoot ?? FindRepoRoot();
-            string teamMembersPath = Path.Combine(repoRoot, "team-members");
             string configPath = Path.Combine(repoRoot, "config.local.json");
 
-            GitProcess git = new GitProcess();
             ConfigStore configStore = new ConfigStore(configPath);
-            TeamMemberDiscovery discovery = new TeamMemberDiscovery(git, repoRoot, teamMembersPath);
-
-            IReadOnlyList<TeamBranch> branches = await discovery.DiscoverAsync();
             HandoffConfig merged = configStore.Read();
+
+            // Re-discover via the existing Supabase client so we don't open a second
+            // HttpClient or duplicate the daemon's network state.
+            IReadOnlyList<TeamBranch> branches = Array.Empty<TeamBranch>();
+            if (this._supabase is not null)
+            {
+                TeamMemberDiscovery discovery = new TeamMemberDiscovery(this._supabase);
+                branches = await discovery.DiscoverContextsAsync();
+            }
 
             this.RenderDiscoveryDetails(merged, branches);
             this.SetStatus(
                 "Discovery complete",
-                "Found " + branches.Count + " branches across " + merged.TeamMembers.Count + " members.",
-                result.FetchSucceeded ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
+                "Found " + branches.Count + " rows across " + merged.TeamMembers.Count + " members.",
+                result.SupabaseReachable ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
         }
         catch (Exception ex)
         {
@@ -284,9 +365,16 @@ public sealed partial class MainWindow : Window
             .OrderBy(b => b.Member, StringComparer.OrdinalIgnoreCase)
             .ThenBy(b => b.Branch, StringComparer.OrdinalIgnoreCase))
         {
+            // TeamBranch was redesigned around Supabase columns: branch is the raw
+            // branch string already, and timestamp comes from the row's UpdatedAt.
+            // Fall back to "(no commit)" when the producer hasn't pushed metadata yet.
+            string sha = string.IsNullOrEmpty(branch.CommitSha) ? "(no sha)" : branch.CommitSha;
+            string ts = branch.UpdatedAt.HasValue
+                ? branch.UpdatedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+                : "(no timestamp)";
             this._branches.Add(new BranchListRow(
                 branch.Member + "/" + branch.Branch,
-                branch.OriginalBranch + " - " + branch.LastCommitSha + " - " + branch.LastCommitDate));
+                sha + " - " + ts));
         }
     }
 
