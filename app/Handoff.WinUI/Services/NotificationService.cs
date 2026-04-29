@@ -11,6 +11,36 @@ public static class NotificationService
     private const int MaxCommitMessagePreviewLength = 90;
     private const int MaxSummaryPreviewLength = 180;
 
+    public static void ShowSenderSummaryPrompt()
+    {
+        try
+        {
+            AppNotificationManager.Default.Register(AppDisplayName, GetNotificationIconUri());
+        }
+        catch (Exception)
+        {
+            AppNotificationManager.Default.Register();
+        }
+
+        var notification = new AppNotificationBuilder()
+            .SetDuration(AppNotificationDuration.Long)
+            .AddText("Share an update with your team")
+            .AddText("Write a quick summary of what changed.")
+            .AddTextBox("summary", "e.g. Refactored the login flow...", "Summary")
+            .AddButton(
+                new AppNotificationButton("Send")
+                    .AddArgument("handoffAction", "send"))
+            .AddButton(
+                new AppNotificationButton("Cancel")
+                    .AddArgument("handoffAction", "cancel"))
+            .BuildNotification();
+
+        notification.Group = "team-changes";
+        notification.Tag = "sender-summary-prompt";
+
+        AppNotificationManager.Default.Show(notification);
+    }
+
     public static void ShowLatestTeamChange()
     {
         var teamDir = FindTeamDirectory();

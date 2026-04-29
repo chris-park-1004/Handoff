@@ -14,7 +14,15 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _window = new SenderHostWindow();
+        var commandLine = Environment.GetCommandLineArgs();
+        var isReceiver = commandLine.Any(arg =>
+            string.Equals(arg, "--receive", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(arg, "--receiver", StringComparison.OrdinalIgnoreCase));
+
+        _window = isReceiver
+            ? new ReceiverHostWindow()
+            : new SenderHostWindow();
+
         _window.Activate();
     }
 }
