@@ -98,12 +98,24 @@ public static class NotificationService
                 new AppNotificationTextProperties().SetMaxLines(3))
             .SetAttributionText(FormatAttribution(change, timestamp))
             .SetTimeStamp(timestamp)
+            .AddButton(BuildActionButton("Accept", "accept", change.CommitSha))
+            .AddButton(BuildActionButton("Deny", "deny", change.CommitSha))
             .BuildNotification();
 
         notification.Group = "team-changes";
         notification.Tag = "latest-team-change";
 
         return notification;
+    }
+
+    private static AppNotificationButton BuildActionButton(
+        string label,
+        string action,
+        string commitSha)
+    {
+        return new AppNotificationButton(label)
+            .AddArgument("handoffAction", action)
+            .AddArgument("commitSha", commitSha);
     }
 
     private static void RegisterNotifications(TeamChange change)
