@@ -9,7 +9,16 @@ const TEAM_CONTEXT_DIR = path.resolve(HOOKS_DIR, '../team-members');
 const CONFIG_PATH = path.join(REPO_ROOT, 'config.local.json');
 const WATERMARKS_PATH = path.join(REPO_ROOT, '.local', 'watermarks.json');
 const LOCK_PATH = path.join(REPO_ROOT, '.local', 'team-context-hook.lock');
-const GATE_PS1 = path.join(HOOKS_DIR, 'gate.ps1');
+const RECEIVER_EXE = path.join(
+  HOOKS_DIR,
+  'receiver',
+  'bin',
+  'x64',
+  'Debug',
+  'net8.0-windows10.0.19041.0',
+  'win-x64',
+  'Handoff.Receiver.exe'
+);
 const DEBUG_LOG = path.join(REPO_ROOT, '.local', 'team-context-debug.log');
 const LOCK_STALE_MS = 60_000;
 
@@ -177,8 +186,8 @@ const preview = buildPreview(lockedNewItems);
 let result;
 try {
   result = spawnSync(
-    'powershell',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Sta', '-File', GATE_PS1],
+    RECEIVER_EXE,
+    [],
     { input: preview, encoding: 'utf8' }
   );
 } finally {
