@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node hook/inject-context.js",
+            "timeout": 30,
+            "statusMessage": "Checking team context"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node hook/inject-context.js",
+            "timeout": 30,
+            "statusMessage": "Checking team context"
+          }
+        ]
+      }
+    ]
+  }
+}

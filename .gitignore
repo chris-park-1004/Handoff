@@ -9,7 +9,6 @@
 config.local.json
 claude-statusline.json
 .local/*
-.claude/
 CLAUDE.md
 
 # OS noise
