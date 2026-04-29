@@ -23,6 +23,7 @@
         </Grid>
 
         <NavigationView
+            x:Name="ShellNavigation"
             Grid.Row="1"
             IsBackButtonVisible="Collapsed"
             IsSettingsVisible="False"
@@ -34,14 +35,29 @@
                 <NavigationViewItem Content="Activity" Icon="Sync" />
             </NavigationView.MenuItems>
 
-            <Grid Padding="28">
+            <ScrollViewer
+                HorizontalScrollBarVisibility="Disabled"
+                HorizontalScrollMode="Disabled"
+                VerticalScrollBarVisibility="Auto"
+                VerticalScrollMode="Auto">
+            <Grid
+                x:Name="ContentRoot"
+                Padding="28"
+                RowSpacing="0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <Grid ColumnSpacing="16">
+                <Grid
+                    x:Name="HeaderGrid"
+                    ColumnSpacing="16"
+                    RowSpacing="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
@@ -54,7 +70,8 @@
                         <TextBlock
                             Text="Team branch discovery and local context sync"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Style="{ThemeResource BodyTextBlockStyle}" />
+                            Style="{ThemeResource BodyTextBlockStyle}"
+                            TextWrapping="Wrap" />
                     </StackPanel>
 
                     <Button
@@ -81,13 +98,23 @@
                     Title="Starting"
                     Message="Daemon is starting." />
 
-                <Grid Grid.Row="2" ColumnSpacing="20" RowSpacing="20">
+                <Grid
+                    x:Name="MainContentGrid"
+                    Grid.Row="2"
+                    ColumnSpacing="20"
+                    RowSpacing="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="320" />
-                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition x:Name="SidebarColumn" Width="320" />
+                        <ColumnDefinition x:Name="DetailsColumn" Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Spacing="16">
+                    <StackPanel
+                        x:Name="SidebarPanel"
+                        Spacing="16">
                         <Border
                             Padding="18"
                             Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
@@ -194,7 +221,10 @@
                         </Border>
                     </StackPanel>
 
-                    <Grid Grid.Column="1" RowSpacing="16">
+                    <Grid
+                        x:Name="DetailsPanel"
+                        Grid.Column="1"
+                        RowSpacing="16">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
@@ -204,13 +234,22 @@
                             Text="Discovered team context"
                             Style="{ThemeResource SubtitleTextBlockStyle}" />
 
-                        <Grid Grid.Row="1" ColumnSpacing="16">
+                        <Grid
+                            x:Name="ContextGrid"
+                            Grid.Row="1"
+                            ColumnSpacing="16"
+                            RowSpacing="16">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="260" />
-                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition x:Name="MembersColumn" Width="260" />
+                                <ColumnDefinition x:Name="BranchesColumn" Width="*" />
                             </Grid.ColumnDefinitions>
 
                             <Border
+                                x:Name="MembersPanel"
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                 BorderThickness="1"
@@ -248,6 +287,7 @@
                             </Border>
 
                             <Border
+                                x:Name="BranchesPanel"
                                 Grid.Column="1"
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
@@ -297,6 +337,7 @@
                     x:Name="StatusText"
                     Visibility="Collapsed" />
             </Grid>
+            </ScrollViewer>
         </NavigationView>
     </Grid>
 </Window>

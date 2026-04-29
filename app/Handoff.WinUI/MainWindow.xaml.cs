@@ -1,26 +1,56 @@
 using System.Collections.ObjectModel;
+using System.Runtime.InteropServices;
 using Handoff.WinUI.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using WinRT.Interop;
 
 namespace Handoff.WinUI;
 
 public sealed partial class MainWindow : Window
 {
+    private const int MinimumWindowWidth = 1100;
+    private const int MinimumWindowHeight = 720;
+    private const uint MinimumSizeSubclassId = 1;
+    private const uint WmGetMinMaxInfo = 0x0024;
+
     // Owned by the window for now. Will move to App.xaml.cs once tray /
     // background-survives-close semantics are added.
     private SyncService? _syncService;
     private ConfigStore? _configStore;
     private string? _repoRoot;
+    private IntPtr _hwnd;
+    private SubclassProc? _minimumSizeSubclassProc;
 
     private readonly ObservableCollection<string> _members = new ObservableCollection<string>();
     private readonly ObservableCollection<BranchListRow> _branches = new ObservableCollection<BranchListRow>();
+
+    [DllImport("Comctl32.dll", SetLastError = true)]
+    private static extern bool SetWindowSubclass(
+        IntPtr hwnd,
+        SubclassProc subclassProc,
+        UIntPtr subclassId,
+        UIntPtr refData);
+
+    [DllImport("Comctl32.dll", SetLastError = true)]
+    private static extern bool RemoveWindowSubclass(
+        IntPtr hwnd,
+        SubclassProc subclassProc,
+        UIntPtr subclassId);
+
+    [DllImport("Comctl32.dll", SetLastError = true)]
+    private static extern IntPtr DefSubclassProc(
+        IntPtr hwnd,
+        uint message,
+        UIntPtr wParam,
+        IntPtr lParam);
 
     public MainWindow()
     {
         this.InitializeComponent();
         this.ExtendsContentIntoTitleBar = true;
         this.SetTitleBar(this.AppTitleBar);
+        this.ConfigureMinimumWindowSize();
         this.MembersList.ItemsSource = this._members;
         this.BranchesList.ItemsSource = this._branches;
         this.Closed += this.OnWindowClosed;
@@ -96,8 +126,49 @@ public sealed partial class MainWindow : Window
         });
     }
 
+    private void ConfigureMinimumWindowSize()
+    {
+        this._hwnd = WindowNative.GetWindowHandle(this);
+        this._minimumSizeSubclassProc = this.MinimumSizeWindowProc;
+        SetWindowSubclass(
+            this._hwnd,
+            this._minimumSizeSubclassProc,
+            new UIntPtr(MinimumSizeSubclassId),
+            UIntPtr.Zero);
+    }
+
+    private IntPtr MinimumSizeWindowProc(
+        IntPtr hwnd,
+        uint message,
+        UIntPtr wParam,
+        IntPtr lParam,
+        UIntPtr subclassId,
+        UIntPtr refData)
+    {
+        if (message == WmGetMinMaxInfo)
+        {
+            MinMaxInfo info = Marshal.PtrToStructure<MinMaxInfo>(lParam);
+            info.MinTrackSize.X = MinimumWindowWidth;
+            info.MinTrackSize.Y = MinimumWindowHeight;
+            Marshal.StructureToPtr(info, lParam, false);
+            return IntPtr.Zero;
+        }
+
+        return DefSubclassProc(hwnd, message, wParam, lParam);
+    }
+
     private async void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        if (this._hwnd != IntPtr.Zero && this._minimumSizeSubclassProc is not null)
+        {
+            RemoveWindowSubclass(
+                this._hwnd,
+                this._minimumSizeSubclassProc,
+                new UIntPtr(MinimumSizeSubclassId));
+            this._minimumSizeSubclassProc = null;
+            this._hwnd = IntPtr.Zero;
+        }
+
         if (this._syncService is null)
         {
             return;
@@ -252,4 +323,34 @@ public sealed class BranchListRow
     public string Title { get; }
 
     public string Subtitle { get; }
+}
+
+internal delegate IntPtr SubclassProc(
+    IntPtr hwnd,
+    uint message,
+    UIntPtr wParam,
+    IntPtr lParam,
+    UIntPtr subclassId,
+    UIntPtr refData);
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct Point
+{
+    public int X;
+
+    public int Y;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct MinMaxInfo
+{
+    public Point Reserved;
+
+    public Point MaxSize;
+
+    public Point MaxPosition;
+
+    public Point MinTrackSize;
+
+    public Point MaxTrackSize;
 }
