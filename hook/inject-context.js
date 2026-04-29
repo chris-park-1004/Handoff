@@ -114,13 +114,13 @@ function fetchSharedContextsFromSupabase(supabase) {
 function findNewSharedContexts(self, teamMembers, watermarks, rows) {
   const newItems = [];
   for (const row of rows) {
-    if (!row || !row.member || !row.branch) continue;
-    if (self && row.member === self) continue;
+    if (!row || !row.member_name || !row.branch) continue;
+    if (self && row.member_name === self) continue;
 
     // Missing roster entry => treated as subscribed (matches daemon's
     // opt-out default for newly discovered members). Explicit subscribe:false
     // is the only thing that filters a member out.
-    const entry = teamMembers.find(m => m && m.name === row.member);
+    const entry = teamMembers.find(m => m && m.name === row.member_name);
     if (entry && entry.subscribe === false) continue;
 
     // Hash is computed client-side from the row JSON — the server no longer
@@ -128,7 +128,7 @@ function findNewSharedContexts(self, teamMembers, watermarks, rows) {
     // shape (System.Text.Json on the producer matches JSON.stringify here
     // for the columns we read).
     const hash = hashContent(JSON.stringify(row));
-    const key = `${row.member}/${row.branch}`;
+    const key = `${row.member_name}/${row.branch}`;
 
     if (watermarks[key] !== hash) {
       newItems.push({ key, hash, parsed: row });
@@ -205,41 +205,54 @@ if (lockedNewItems.length === 0) {
   process.exit(0);
 }
 
-const preview = buildPreview(lockedNewItems);
+// Show ONE popup per new item so the user can Allow/Deny each member
+// independently. We accumulate the previews of items the user approved and
+// emit them at the end as a single combined injection — Claude Code only
+// reads stdout once per hook fire.
+const allowedPreviews = [];
 
-let result;
 try {
-  result = spawnSync(
-    RECEIVER_EXE,
-    [],
-    { input: preview, encoding: 'utf8' }
-  );
+  for (const item of lockedNewItems) {
+    const itemPreview = buildPreview([item]);
+
+    const result = spawnSync(
+      RECEIVER_EXE,
+      [],
+      { input: itemPreview, encoding: 'utf8' }
+    );
+    const code = result.status;
+    log(`${event}: gate (${item.key}) exited with code ${code}`);
+    if (result.error) {
+      log(`${event}: gate (${item.key}) error: ${result.error.message}`);
+    }
+    if (result.signal) {
+      log(`${event}: gate (${item.key}) signal: ${result.signal}`);
+    }
+    if (result.stderr) {
+      log(`${event}: gate (${item.key}) stderr: ${result.stderr.trim()}`);
+    }
+
+    // Rotate-on-suggest: advance the watermark on Allow (0) AND Deny (1) so
+    // the same content never re-prompts the user. Other exit codes (signal,
+    // crash, ENOENT) leave the watermark untouched so the next fire retries.
+    if (code === 0 || code === 1) {
+      watermarks[item.key] = item.hash;
+    } else {
+      log(`${event}: gate (${item.key}) did not finish cleanly — watermark unchanged`);
+    }
+
+    if (code === 0) {
+      allowedPreviews.push(itemPreview);
+    }
+  }
 } finally {
+  // Persist watermark progress even if a mid-loop crash happened — we don't
+  // want a single bad gate to invalidate the user's prior Allow/Deny clicks.
+  writeJSON(WATERMARKS_PATH, watermarks);
   releaseLock(lockHandle);
 }
 
-const code = result.status;
-log(`${event}: gate exited with code ${code}`);
-if (result.error) {
-  log(`${event}: gate error: ${result.error.message}`);
-}
-if (result.signal) {
-  log(`${event}: gate signal: ${result.signal}`);
-}
-if (result.stderr) {
-  log(`${event}: gate stderr: ${result.stderr.trim()}`);
-}
-
-if (code === 0 || code === 1) {
-  for (const item of lockedNewItems) {
-    watermarks[item.key] = item.hash;
-  }
-  writeJSON(WATERMARKS_PATH, watermarks);
-} else {
-  log(`${event}: gate did not finish cleanly — watermark unchanged`);
-}
-
-if (code === 0) {
-  process.stdout.write(preview);
+if (allowedPreviews.length > 0) {
+  process.stdout.write(allowedPreviews.join('\n\n---\n\n'));
 }
 process.exit(0);

@@ -25,6 +25,17 @@ public sealed class SyncService : IDisposable
     // the constructor for tests or different deployment profiles.
     private static readonly TimeSpan DefaultInterval = TimeSpan.FromSeconds(30);
 
+    // Logins that we never push into team_members even if they appear in the local
+    // roster. "github" leaks in from older git-based discovery (origin URL like
+    // git@github.com:owner/repo.git was misparsed as a committer name in a previous
+    // iteration); the GitHub corporate account does exist, so a 200 OK from the
+    // profile API would otherwise pollute the team_members table.
+    private static readonly IReadOnlySet<string> ExcludedLogins =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "github",
+        };
+
     private readonly GitProcess _git;
     private readonly ConfigStore _configStore;
     private readonly SupabaseClient _supabase;
@@ -278,7 +289,7 @@ public sealed class SyncService : IDisposable
             }
             foreach (TeamMemberEntry entry in snapshot.TeamMembers)
             {
-                if (!string.IsNullOrEmpty(entry.Name))
+                if (!string.IsNullOrEmpty(entry.Name) && !ExcludedLogins.Contains(entry.Name))
                 {
                     knownLogins.Add(entry.Name);
                 }
