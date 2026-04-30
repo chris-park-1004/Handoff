@@ -32,7 +32,6 @@ public sealed partial class ActivityView : UserControl
         this.LatestSyncText.Text = latest?.UpdatedAt is null
             ? "No rows"
             : latest.UpdatedAt.Value.ToLocalTime().ToString("HH:mm:ss");
-        this.ContextRowsText.Text = contexts.Count.ToString();
         _ = supabaseReachable;
     }
 
@@ -99,11 +98,16 @@ public sealed partial class ActivityView : UserControl
                 ToLocalTime(u) >= since);
         }
 
+        List<SharedContext> visibleContexts = filtered
+            .OrderByDescending(c => c.UpdatedAt ?? DateTime.MinValue)
+            .ToList();
+
         this._activity.Clear();
-        foreach (SharedContext context in filtered.OrderByDescending(c => c.UpdatedAt ?? DateTime.MinValue))
+        foreach (SharedContext context in visibleContexts)
         {
             this._activity.Add(ActivityRow.FromContext(context));
         }
+        this.ContextRowsText.Text = visibleContexts.Count.ToString();
     }
 
     private static DateTime? ResolveCutoff(string range)
@@ -162,19 +166,9 @@ public sealed partial class ActivityView : UserControl
         private static string BuildMetadata(SharedContext context)
         {
             int changedFiles = CountJsonArray(context.ChangedFiles);
-            int tags = CountJsonArray(context.Tags);
-
-            if (changedFiles > 0 && tags > 0)
-            {
-                return changedFiles + " files, " + tags + " tags";
-            }
             if (changedFiles > 0)
             {
                 return changedFiles + " files";
-            }
-            if (tags > 0)
-            {
-                return tags + " tags";
             }
             return "No metadata";
         }
