@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
 using Handoff.WinUI.Models;
+using Handoff.WinUI.Pages;
 using Handoff.WinUI.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -27,6 +28,7 @@ public sealed partial class MainWindow : Window
 
     private readonly ObservableCollection<string> _members = new ObservableCollection<string>();
     private readonly ObservableCollection<BranchListRow> _branches = new ObservableCollection<BranchListRow>();
+    private IReadOnlyList<TeamMember> _teamMetadata = Array.Empty<TeamMember>();
 
     [DllImport("Comctl32.dll", SetLastError = true)]
     private static extern bool SetWindowSubclass(
@@ -56,6 +58,7 @@ public sealed partial class MainWindow : Window
         this.ConfigureMinimumWindowSize();
         this.MembersList.ItemsSource = this._members;
         this.BranchesList.ItemsSource = this._branches;
+        this.TeamRoot.SubscriptionChanged += this.OnTeamSubscriptionChanged;
         this.Closed += this.OnWindowClosed;
         this.StartSyncService();
     }
@@ -91,6 +94,7 @@ public sealed partial class MainWindow : Window
             this._syncService.Start();
 
             this.LoadWorkspaceConfig();
+            _ = this.RefreshTeamAsync();
             this.SetStatus("Daemon started", "First sync cycle is running.", InfoBarSeverity.Informational);
             this.SyncProgress.IsActive = true;
         }
@@ -123,6 +127,7 @@ public sealed partial class MainWindow : Window
             this.FetchStatusText.Text = result.SupabaseReachable ? "Current" : "Supabase unreachable";
             this.SyncProgress.IsActive = false;
             this.LoadWorkspaceConfig();
+            await this.RefreshTeamAsync();
 
             if (result.HadError)
             {
@@ -148,6 +153,31 @@ public sealed partial class MainWindow : Window
             await this.RefreshBranchesAsync();
             await this.RefreshActivityAsync(result.SupabaseReachable);
         });
+    }
+
+    private async Task RefreshTeamAsync()
+    {
+        if (this._configStore is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (this._supabase is not null && this._supabase.IsConfigured())
+            {
+                this._teamMetadata = await this._supabase.SelectTeamMembersAsync();
+            }
+
+            HandoffConfig config = this._configStore.Read();
+            this.TeamRoot.RenderTeam(config, this._teamMetadata);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("MainWindow", "RefreshTeam", ex);
+            HandoffConfig config = this._configStore.Read();
+            this.TeamRoot.RenderTeam(config, this._teamMetadata);
+        }
     }
 
     /* ======================================================================================
@@ -347,6 +377,7 @@ public sealed partial class MainWindow : Window
             }
 
             this.RenderDiscoveryDetails(merged, branches);
+            await this.RefreshTeamAsync();
             await this.RefreshActivityAsync(result.SupabaseReachable);
             this.SetStatus(
                 "Discovery complete",
@@ -410,6 +441,32 @@ public sealed partial class MainWindow : Window
             string suffix = member.Subscribe ? " (subscribed)" : " (muted)";
             this._members.Add(member.Name + suffix);
         }
+        this.TeamRoot.RenderTeam(config, this._teamMetadata);
+    }
+
+    private void OnTeamSubscriptionChanged(object? sender, TeamSubscriptionChangedEventArgs e)
+    {
+        if (this._configStore is null)
+        {
+            return;
+        }
+
+        HandoffConfig config = this._configStore.Read();
+        TeamMemberEntry? entry = config.TeamMembers.FirstOrDefault(m =>
+            string.Equals(m.Name, e.Name, StringComparison.OrdinalIgnoreCase));
+
+        if (entry is null)
+        {
+            entry = new TeamMemberEntry
+            {
+                Name = e.Name,
+            };
+            config.TeamMembers.Add(entry);
+        }
+
+        entry.Subscribe = e.Subscribe;
+        this._configStore.Write(config);
+        this.RenderMembers(config);
     }
 
     private void ShellNavigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
