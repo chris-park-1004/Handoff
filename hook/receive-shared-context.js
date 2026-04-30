@@ -159,6 +159,63 @@ function getContextIdentity(row, hash) {
   };
 }
 
+function normalizeFilePath(filePath) {
+  return String(filePath || '').replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+}
+
+function getLocalWorkingFiles() {
+  const files = new Set();
+  const commands = [
+    ['diff', '--name-only', 'HEAD'],
+    ['ls-files', '--others', '--exclude-standard'],
+  ];
+
+  for (const args of commands) {
+    const result = spawnSync('git', ['-C', REPO_ROOT, ...args], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 10_000,
+    });
+    if (result.status !== 0 || result.error) {
+      log(`local file scan failed for git ${args.join(' ')}: ${result.error ? result.error.message : (result.stderr || '').trim()}`);
+      continue;
+    }
+
+    for (const line of (result.stdout || '').split(/\r?\n/)) {
+      const normalized = normalizeFilePath(line.trim());
+      if (normalized) {
+        files.add(normalized);
+      }
+    }
+  }
+
+  return files;
+}
+
+function getChangedFilesFromRow(row) {
+  const raw = row ? row.changed_files : null;
+  if (Array.isArray(raw)) {
+    return raw.map(normalizeFilePath).filter(Boolean);
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map(normalizeFilePath).filter(Boolean);
+      }
+    } catch (_) {}
+    return raw
+      .split(/[\r\n,]+/)
+      .map(normalizeFilePath)
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function findOverlappingFiles(localFiles, teammateFiles) {
+  return teammateFiles.filter(file => localFiles.has(file));
+}
+
 // Pulls every shared_contexts row via Supabase REST. We use curl (shipped on
 // Win10+) to keep this synchronous — hooks must complete fast and predictably,
 // and async/await would add a layer for no real gain at this scale.
@@ -250,12 +307,14 @@ function findNewSharedContexts(self, teamMembers, watermarks, rows) {
  * return here is the exact text injected into the model context on Allow, so
  * preview-text and injection-text are guaranteed identical (no transform).
  */
-function buildPreview(items) {
+function buildPreview(items, localFiles) {
   return items.map(item => {
     const p = item.parsed || {};
     const summary = p.summary || '(no summary)';
     const commitMessage = p.commit_message || '';
     const sha = p.commit_sha ? ` (${p.commit_sha})` : '';
+    const teammateFiles = getChangedFilesFromRow(p);
+    const overlappingFiles = findOverlappingFiles(localFiles, teammateFiles);
 
     const lines = [
       `## From ${item.displayKey || item.key}`,
@@ -263,9 +322,20 @@ function buildPreview(items) {
       `**Summary**: ${summary}`,
     ];
 
+    if (overlappingFiles.length > 0) {
+      lines.push('');
+      lines.push(`**Potential conflict**: You and this teammate are both touching ${overlappingFiles.length} file(s): ${overlappingFiles.join(', ')}`);
+      lines.push('Please warn the user before suggesting edits in these files.');
+    }
+
     if (commitMessage) {
       lines.push('');
       lines.push(`**Commit**: ${commitMessage}${sha}`);
+    }
+
+    if (teammateFiles.length > 0) {
+      lines.push('');
+      lines.push(`**Teammate files**: ${teammateFiles.join(', ')}`);
     }
 
     return lines.join('\n');
@@ -294,7 +364,8 @@ writeJSON(WATERMARKS_PATH, watermarks);
 // (cheap) so we never inject a hash that another instance already consumed.
 const rows = fetchSharedContextsFromSupabase(config.supabase);
 const teamMembers = Array.isArray(config['team-members']) ? config['team-members'] : [];
-log(`config: self=${config.self || '(empty)'}, subscribed=${teamMembers.filter(m => m && m.subscribe === true).map(m => m.name).join(',') || '(none)'}, fetched_rows=${rows.length}`);
+const localFiles = getLocalWorkingFiles();
+log(`config: self=${config.self || '(empty)'}, subscribed=${teamMembers.filter(m => m && m.subscribe === true).map(m => m.name).join(',') || '(none)'}, fetched_rows=${rows.length}, local_files=${localFiles.size}`);
 
 const newItems = findNewSharedContexts(config.self, teamMembers, watermarks, rows);
 writeDiagnostics({
@@ -302,6 +373,7 @@ writeDiagnostics({
   self: config.self || '',
   subscribed_members: teamMembers.filter(m => m && m.subscribe === true).map(m => m.name),
   fetched_rows: rows.length,
+  local_files: Array.from(localFiles),
   new_items: newItems.map(item => item.key),
   receiver_exe_exists: fs.existsSync(RECEIVER_EXE),
 });
@@ -336,7 +408,7 @@ const allowedPreviews = [];
 
 try {
   for (const item of lockedNewItems) {
-    const itemPreview = buildPreview([item]);
+    const itemPreview = buildPreview([item], localFiles);
 
     const result = spawnSync(
       RECEIVER_EXE,

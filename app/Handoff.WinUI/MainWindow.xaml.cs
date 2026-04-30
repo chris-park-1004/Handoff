@@ -103,7 +103,10 @@ public sealed partial class MainWindow : Window
 
             this._syncService = new SyncService(git, configStore, this._supabase, this._github, repoRoot);
             this._syncService.CycleCompleted += this.OnSyncCycleCompleted;
-            this._syncService.Start();
+            // One-shot sync at startup — team roster doesn't change often enough to
+            // justify a 30s polling loop that burns the GitHub rate limit. The user
+            // can manually re-sync via the refresh button (also calls RunOnceAsync).
+            _ = this._syncService.RunOnceAsync();
 
             this.SettingsRoot.Bind(configStore, repoRoot, configPath, logPath);
             this.ApplyTheme(snapshot.Theme ?? "System");
