@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-//
+////
 const HOOKS_DIR = __dirname;
 const REPO_ROOT = path.resolve(HOOKS_DIR, '..');
 const CONFIG_PATH = path.join(REPO_ROOT, 'config.local.json');
