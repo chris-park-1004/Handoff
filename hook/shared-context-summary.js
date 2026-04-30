@@ -349,6 +349,11 @@ try {
     log(`${event}: sender stderr: ${result.stderr.trim()}`);
   }
 
+  if (result.error || result.status === null) {
+    log(`${event}: sender did not launch cleanly — producer state unchanged`);
+    process.exit(0);
+  }
+
   state.last_seen_commit_sha = commit.commit_sha;
   state.updated_at = new Date().toISOString();
   writeJSON(STATE_PATH, state);
