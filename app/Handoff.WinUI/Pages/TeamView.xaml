@@ -57,112 +57,57 @@
                 </Grid>
 
                 <ListView
+                    x:Name="TeamList"
                     Grid.Row="1"
                     SelectionMode="None">
-                    <ListViewItem>
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="48" />
-                                <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="3*" />
-                                <ColumnDefinition Width="160" />
-                            </Grid.ColumnDefinitions>
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="MinHeight" Value="0" />
+                            <Setter Property="Padding" Value="0,10,0,10" />
+                            <Setter Property="Margin" Value="0" />
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                            <Setter Property="BorderThickness" Value="0,0,0,1" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="48" />
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="3*" />
+                                    <ColumnDefinition Width="160" />
+                                </Grid.ColumnDefinitions>
 
-                            <FontIcon
-                                Width="32"
-                                Height="32"
-                                VerticalAlignment="Center"
-                                FontSize="18"
-                                Glyph="&#xE77B;" />
-                            <TextBlock
-                                Grid.Column="1"
-                                VerticalAlignment="Center"
-                                Text="Chris Park"
-                                TextTrimming="CharacterEllipsis" />
-                            <TextBlock
-                                Grid.Column="2"
-                                VerticalAlignment="Center"
-                                Text="chris@example.com"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                TextTrimming="CharacterEllipsis" />
-                            <ToggleSwitch
-                                Grid.Column="3"
-                                VerticalAlignment="Center"
-                                IsOn="True"
-                                OnContent="Subscribed"
-                                OffContent="Muted" />
-                        </Grid>
-                    </ListViewItem>
-
-                    <ListViewItem>
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="48" />
-                                <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="3*" />
-                                <ColumnDefinition Width="160" />
-                            </Grid.ColumnDefinitions>
-
-                            <FontIcon
-                                Width="32"
-                                Height="32"
-                                VerticalAlignment="Center"
-                                FontSize="18"
-                                Glyph="&#xE77B;" />
-                            <TextBlock
-                                Grid.Column="1"
-                                VerticalAlignment="Center"
-                                Text="GitHub"
-                                TextTrimming="CharacterEllipsis" />
-                            <TextBlock
-                                Grid.Column="2"
-                                VerticalAlignment="Center"
-                                Text="noreply@github.com"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                TextTrimming="CharacterEllipsis" />
-                            <ToggleSwitch
-                                Grid.Column="3"
-                                VerticalAlignment="Center"
-                                IsOn="True"
-                                OnContent="Subscribed"
-                                OffContent="Muted" />
-                        </Grid>
-                    </ListViewItem>
-
-                    <ListViewItem>
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="48" />
-                                <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="3*" />
-                                <ColumnDefinition Width="160" />
-                            </Grid.ColumnDefinitions>
-
-                            <FontIcon
-                                Width="32"
-                                Height="32"
-                                VerticalAlignment="Center"
-                                FontSize="18"
-                                Glyph="&#xE77B;" />
-                            <TextBlock
-                                Grid.Column="1"
-                                VerticalAlignment="Center"
-                                Text="Handoff Init"
-                                TextTrimming="CharacterEllipsis" />
-                            <TextBlock
-                                Grid.Column="2"
-                                VerticalAlignment="Center"
-                                Text="handoff@example.com"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                TextTrimming="CharacterEllipsis" />
-                            <ToggleSwitch
-                                Grid.Column="3"
-                                VerticalAlignment="Center"
-                                IsOn="False"
-                                OnContent="Subscribed"
-                                OffContent="Muted" />
-                        </Grid>
-                    </ListViewItem>
+                                <FontIcon
+                                    Width="32"
+                                    Height="32"
+                                    VerticalAlignment="Center"
+                                    FontSize="18"
+                                    Glyph="&#xE77B;" />
+                                <TextBlock
+                                    Grid.Column="1"
+                                    VerticalAlignment="Center"
+                                    Text="{Binding Name}"
+                                    TextTrimming="CharacterEllipsis" />
+                                <TextBlock
+                                    Grid.Column="2"
+                                    VerticalAlignment="Center"
+                                    Text="{Binding Email}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextTrimming="CharacterEllipsis" />
+                                <ToggleSwitch
+                                    Grid.Column="3"
+                                    VerticalAlignment="Center"
+                                    IsOn="{Binding Subscribe, Mode=TwoWay}"
+                                    Tag="{Binding Name}"
+                                    Toggled="OnSubscriptionToggled"
+                                    OnContent="Subscribed"
+                                    OffContent="Muted" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
                 </ListView>
             </Grid>
         </Border>
