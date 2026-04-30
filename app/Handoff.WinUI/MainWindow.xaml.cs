@@ -53,14 +53,26 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         this.InitializeComponent();
+        this.AppWindow.SetIcon("Assets/Logo.ico");
         this.ExtendsContentIntoTitleBar = true;
         this.SetTitleBar(this.AppTitleBar);
         this.ConfigureMinimumWindowSize();
         this.MembersList.ItemsSource = this._members;
         this.BranchesList.ItemsSource = this._branches;
         this.TeamRoot.SubscriptionChanged += this.OnTeamSubscriptionChanged;
+        this.SettingsRoot.ThemeChanged += (_, theme) => this.ApplyTheme(theme);
         this.Closed += this.OnWindowClosed;
         this.StartSyncService();
+    }
+
+    private void ApplyTheme(string theme)
+    {
+        this.RootLayout.RequestedTheme = theme switch
+        {
+            "Light" => ElementTheme.Light,
+            "Dark" => ElementTheme.Dark,
+            _ => ElementTheme.Default,
+        };
     }
 
     private void StartSyncService()
@@ -92,6 +104,9 @@ public sealed partial class MainWindow : Window
             this._syncService = new SyncService(git, configStore, this._supabase, this._github, repoRoot);
             this._syncService.CycleCompleted += this.OnSyncCycleCompleted;
             this._syncService.Start();
+
+            this.SettingsRoot.Bind(configStore, repoRoot, configPath, logPath);
+            this.ApplyTheme(snapshot.Theme ?? "System");
 
             this.LoadWorkspaceConfig();
             _ = this.RefreshTeamAsync();
@@ -151,7 +166,7 @@ public sealed partial class MainWindow : Window
             // through silently — the panel keeps its last-known content rather
             // than blanking out on a transient Supabase blip.
             await this.RefreshBranchesAsync();
-            await this.RefreshActivityAsync(result.SupabaseReachable);
+            await this.RefreshActivityAsync(result.SupabaseReachable, result.CompletedAt);
         });
     }
 
@@ -228,7 +243,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task RefreshActivityAsync(bool supabaseReachable)
+    private async Task RefreshActivityAsync(bool supabaseReachable, DateTime lastSyncAt)
     {
         if (this._supabase is null)
         {
@@ -239,12 +254,12 @@ public sealed partial class MainWindow : Window
         {
             this.ActivityRoot.RenderLoading();
             IReadOnlyList<SharedContext> rows = await this._supabase.SelectAllAsync();
-            this.ActivityRoot.RenderSharedContexts(rows, supabaseReachable);
+            this.ActivityRoot.RenderSharedContexts(rows, supabaseReachable, lastSyncAt);
         }
         catch (Exception ex)
         {
             Logger.LogError("MainWindow", "RefreshActivity", ex);
-            this.ActivityRoot.RenderSharedContexts(Array.Empty<SharedContext>(), false);
+            this.ActivityRoot.RenderSharedContexts(Array.Empty<SharedContext>(), false, lastSyncAt);
         }
     }
 
@@ -378,7 +393,7 @@ public sealed partial class MainWindow : Window
 
             this.RenderDiscoveryDetails(merged, branches);
             await this.RefreshTeamAsync();
-            await this.RefreshActivityAsync(result.SupabaseReachable);
+            await this.RefreshActivityAsync(result.SupabaseReachable, result.CompletedAt);
             this.SetStatus(
                 "Discovery complete",
                 "Found " + branches.Count + " rows across " + merged.TeamMembers.Count + " members.",
@@ -480,6 +495,8 @@ public sealed partial class MainWindow : Window
         this.ContentRoot.Visibility = tag == "dashboard" ? Visibility.Visible : Visibility.Collapsed;
         this.TeamRoot.Visibility = tag == "team" ? Visibility.Visible : Visibility.Collapsed;
         this.ActivityRoot.Visibility = tag == "activity" ? Visibility.Visible : Visibility.Collapsed;
+        this.AboutRoot.Visibility = tag == "about" ? Visibility.Visible : Visibility.Collapsed;
+        this.SettingsRoot.Visibility = tag == "settings" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void SetStatus(string title, string message, InfoBarSeverity severity)

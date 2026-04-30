@@ -47,4 +47,9 @@ public sealed class HandoffConfig
 
     [JsonPropertyName("supabase")]
     public SupabaseConfig? Supabase { get; set; }
+
+    // "System" | "Light" | "Dark". Missing/unknown values fall back to "System"
+    // at the UI layer, so the JSON file stays clean if a user hand-edits it.
+    [JsonPropertyName("theme")]
+    public string? Theme { get; set; }
 }

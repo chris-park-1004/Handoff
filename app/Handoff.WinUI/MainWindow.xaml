@@ -5,8 +5,8 @@
     xmlns:pages="using:Handoff.WinUI.Pages"
     Title="Handoff">
     <Grid
-        Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
-        RequestedTheme="Dark">
+        x:Name="RootLayout"
+        Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="36" />
             <RowDefinition Height="*" />
@@ -36,6 +36,14 @@
                 <NavigationViewItem x:Name="TeamNavItem" Content="Team" Icon="People" Tag="team" />
                 <NavigationViewItem x:Name="ActivityNavItem" Content="Activity" Icon="Sync" Tag="activity" />
             </NavigationView.MenuItems>
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem x:Name="SettingsNavItem" Content="Settings" Icon="Setting" Tag="settings" />
+                <NavigationViewItem x:Name="AboutNavItem" Content="About" Tag="about">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE946;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
 
             <Grid>
             <Grid
@@ -322,6 +330,12 @@
                 Visibility="Collapsed" />
             <pages:ActivityView
                 x:Name="ActivityRoot"
+                Visibility="Collapsed" />
+            <pages:AboutView
+                x:Name="AboutRoot"
+                Visibility="Collapsed" />
+            <pages:SettingsView
+                x:Name="SettingsRoot"
                 Visibility="Collapsed" />
             </Grid>
         </NavigationView>
