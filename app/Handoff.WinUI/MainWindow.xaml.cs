@@ -152,7 +152,7 @@ public sealed partial class MainWindow : Window
             // through silently — the panel keeps its last-known content rather
             // than blanking out on a transient Supabase blip.
             await this.RefreshBranchesAsync();
-            await this.RefreshActivityAsync(result.SupabaseReachable);
+            await this.RefreshActivityAsync(result.SupabaseReachable, result.CompletedAt);
         });
     }
 
@@ -229,7 +229,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task RefreshActivityAsync(bool supabaseReachable)
+    private async Task RefreshActivityAsync(bool supabaseReachable, DateTime lastSyncAt)
     {
         if (this._supabase is null)
         {
@@ -240,12 +240,12 @@ public sealed partial class MainWindow : Window
         {
             this.ActivityRoot.RenderLoading();
             IReadOnlyList<SharedContext> rows = await this._supabase.SelectAllAsync();
-            this.ActivityRoot.RenderSharedContexts(rows, supabaseReachable);
+            this.ActivityRoot.RenderSharedContexts(rows, supabaseReachable, lastSyncAt);
         }
         catch (Exception ex)
         {
             Logger.LogError("MainWindow", "RefreshActivity", ex);
-            this.ActivityRoot.RenderSharedContexts(Array.Empty<SharedContext>(), false);
+            this.ActivityRoot.RenderSharedContexts(Array.Empty<SharedContext>(), false, lastSyncAt);
         }
     }
 
@@ -379,7 +379,7 @@ public sealed partial class MainWindow : Window
 
             this.RenderDiscoveryDetails(merged, branches);
             await this.RefreshTeamAsync();
-            await this.RefreshActivityAsync(result.SupabaseReachable);
+            await this.RefreshActivityAsync(result.SupabaseReachable, result.CompletedAt);
             this.SetStatus(
                 "Discovery complete",
                 "Found " + branches.Count + " rows across " + merged.TeamMembers.Count + " members.",

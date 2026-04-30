@@ -19,19 +19,13 @@ public sealed partial class ActivityView : UserControl
         this.ActivityList.ItemsSource = this._activity;
     }
 
-    public void RenderSharedContexts(IReadOnlyList<SharedContext> contexts, bool supabaseReachable)
+    public void RenderSharedContexts(IReadOnlyList<SharedContext> contexts, bool supabaseReachable, DateTime lastSyncAt)
     {
         this._allContexts = contexts;
         this.RebuildPersonFilter();
         this.ApplyFilters();
 
-        SharedContext? latest = contexts
-            .OrderByDescending(c => c.UpdatedAt ?? DateTime.MinValue)
-            .FirstOrDefault();
-
-        this.LatestSyncText.Text = latest?.UpdatedAt is null
-            ? "No rows"
-            : latest.UpdatedAt.Value.ToLocalTime().ToString("HH:mm:ss");
+        this.LatestSyncText.Text = lastSyncAt.ToString("HH:mm:ss");
         _ = supabaseReachable;
     }
 
