@@ -21,10 +21,17 @@ const DEBUG_LOG = path.join(REPO_ROOT, '.local', 'team-context-debug.log');
 const DIAGNOSTICS_PATH = path.join(REPO_ROOT, '.local', 'receive-shared-context-diagnostics.json');
 const LOCK_STALE_MS = 60_000;
 
+// Sender invokes the host CLI (claude/codex) for summary generation, which
+// re-fires SessionStart hooks. This guard makes those re-fires no-ops so we
+// don't recurse into another receiver popup mid-generation.
 if (process.env.HANDOFF_SUMMARY_GENERATION === '1') {
   process.exit(0);
 }
 
+/**
+ * Append a debug line to the shared team-context log. Best-effort — never
+ * throws so a logging failure can't take the hook down.
+ */
 function log(msg) {
   try {
     fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
@@ -32,6 +39,11 @@ function log(msg) {
   } catch (_) {}
 }
 
+/**
+ * Parse a JSON file, returning `fallback` on any read/parse error. Used for
+ * config + watermarks where a missing/corrupt file should reset to defaults
+ * instead of crashing the hook.
+ */
 function readJSON(filePath, fallback) {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -40,11 +52,19 @@ function readJSON(filePath, fallback) {
   }
 }
 
+/**
+ * Serialize `data` as pretty JSON to `filePath`, creating parent directories
+ * as needed. Errors propagate — callers decide whether to swallow.
+ */
 function writeJSON(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
+/**
+ * Snapshot the current decision state to disk for post-mortem debugging when
+ * the popup doesn't appear as expected. Always best-effort.
+ */
 function writeDiagnostics(data) {
   try {
     writeJSON(DIAGNOSTICS_PATH, {
@@ -54,6 +74,13 @@ function writeDiagnostics(data) {
   } catch (_) {}
 }
 
+/**
+ * Try to take an exclusive file lock so two concurrent hook fires (e.g.
+ * SessionStart + UserPromptSubmit racing) don't both pop up the same item.
+ * Returns the open fd on success or null if another instance holds it; if a
+ * stale lock (older than LOCK_STALE_MS) is found it gets cleared and retried
+ * once so a crashed predecessor doesn't lock us out forever.
+ */
 function tryAcquireLock() {
   fs.mkdirSync(path.dirname(LOCK_PATH), { recursive: true });
 
@@ -78,19 +105,37 @@ function tryAcquireLock() {
   }
 }
 
+/**
+ * Release the file lock acquired by tryAcquireLock. Both close and unlink are
+ * swallowed because a half-released lock will be cleaned up on the next run
+ * via the stale-lock fallback.
+ */
 function releaseLock(handle) {
   try { fs.closeSync(handle); } catch (_) {}
   try { fs.unlinkSync(LOCK_PATH); } catch (_) {}
 }
 
+/**
+ * SHA-256 hex digest of the input string. Used to fingerprint a Supabase row
+ * so we can detect whether the user has already been shown that exact content.
+ */
 function hashContent(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
+/**
+ * Case-insensitive name equality. Member names come from git config + manual
+ * config edits, so casing isn't reliable enough to compare directly.
+ */
 function sameName(a, b) {
   return String(a || '').toLowerCase() === String(b || '').toLowerCase();
 }
 
+/**
+ * Build the watermark key + human-readable label for a shared_contexts row.
+ * Prefers the row id (one-watermark-per-row), falls back to commit_sha +
+ * updated_at + hash prefix so older rows missing an id still get a stable key.
+ */
 function getContextIdentity(row, hash) {
   const displayKey = `${row.member_name}/${row.branch}`;
   if (row.id !== null && row.id !== undefined && String(row.id).trim() !== '') {
@@ -200,6 +245,11 @@ function findNewSharedContexts(self, teamMembers, watermarks, rows) {
   return newItems;
 }
 
+/**
+ * Render the markdown preview shown in the receiver popup. Whatever string we
+ * return here is the exact text injected into the model context on Allow, so
+ * preview-text and injection-text are guaranteed identical (no transform).
+ */
 function buildPreview(items) {
   return items.map(item => {
     const p = item.parsed || {};

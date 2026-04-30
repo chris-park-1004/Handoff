@@ -19,10 +19,17 @@ const SENDER_EXE = path.join(
 );
 const LOCK_STALE_MS = 60_000;
 
+// When the sender opens claude/codex to generate a summary, that child
+// process re-fires hooks. This guard makes the re-fire a silent no-op so we
+// don't recurse into another sender popup mid-generation.
 if (process.env.HANDOFF_SUMMARY_GENERATION === '1') {
   process.exit(0);
 }
 
+/**
+ * Append a debug line tagged with `producer:` so its origin is obvious in the
+ * shared team-context log. Best-effort — never throws.
+ */
 function log(msg) {
   try {
     fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
@@ -30,6 +37,11 @@ function log(msg) {
   } catch (_) {}
 }
 
+/**
+ * Parse a JSON file, returning `fallback` on any read/parse error. Used for
+ * config + producer state where a missing file means "first run" rather than
+ * an error condition.
+ */
 function readJSON(filePath, fallback) {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -38,11 +50,21 @@ function readJSON(filePath, fallback) {
   }
 }
 
+/**
+ * Serialize `data` as pretty JSON to `filePath`, creating parent directories
+ * as needed.
+ */
 function writeJSON(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
+/**
+ * Try to take an exclusive lock so concurrent producer-side fires (SessionStart
+ * + Stop racing on session end) don't both spawn the sender for the same
+ * commit. Returns null when another instance holds the lock; auto-recovers
+ * locks older than LOCK_STALE_MS so a crashed predecessor isn't fatal.
+ */
 function tryAcquireLock() {
   fs.mkdirSync(path.dirname(LOCK_PATH), { recursive: true });
 
@@ -65,11 +87,21 @@ function tryAcquireLock() {
   }
 }
 
+/**
+ * Release the lock acquired by tryAcquireLock. Failures are swallowed — the
+ * stale-lock fallback in the next run handles cleanup.
+ */
 function releaseLock(handle) {
   try { fs.closeSync(handle); } catch (_) {}
   try { fs.unlinkSync(LOCK_PATH); } catch (_) {}
 }
 
+/**
+ * Read HEAD's branch + the most recent commit metadata directly from the
+ * .git directory. We deliberately avoid `git log -1` here because hook
+ * subprocesses sometimes inherit a working directory that confuses git's
+ * porcelain commands; reading reflog + HEAD is cheap and unambiguous.
+ */
 function getCommitInfo() {
   const gitDir = findGitDir(REPO_ROOT);
   const headText = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
@@ -98,6 +130,11 @@ function getCommitInfo() {
   };
 }
 
+/**
+ * Return the list of files touched by `commitSha`. Uses `--root` so the very
+ * first commit of a repo (which has no parent) still produces a file list
+ * instead of erroring out. Returns [] on any failure.
+ */
 function getChangedFiles(commitSha) {
   const result = spawnSync('git', [
     '-C',
@@ -125,6 +162,11 @@ function getChangedFiles(commitSha) {
     .filter(Boolean);
 }
 
+/**
+ * Walk up from `startDirectory` looking for a .git entry. Handles both real
+ * .git directories and gitfile pointers (used by submodules and worktrees) so
+ * the hook keeps working in non-trivial repo layouts.
+ */
 function findGitDir(startDirectory) {
   let current = startDirectory;
   while (current && path.dirname(current) !== current) {
@@ -147,6 +189,11 @@ function findGitDir(startDirectory) {
   throw new Error(`No .git directory found from ${startDirectory}`);
 }
 
+/**
+ * Extract commit SHA, timestamp, and message from a single HEAD reflog line.
+ * Reflog format is `<old> <new> <name> <email> <unixSec> <tz>\t<action>:msg`,
+ * stable across git versions so a regex on it is safe.
+ */
 function parseReflogLine(line) {
   const tabIndex = line.indexOf('\t');
   const meta = tabIndex === -1 ? line : line.slice(0, tabIndex);
@@ -170,6 +217,11 @@ function parseReflogLine(line) {
   return { commitSha, timestamp, message };
 }
 
+/**
+ * Format a unix timestamp + git timezone offset (e.g. "+0900") as ISO-8601 in
+ * that local timezone. We can't use Date.toISOString() because it forces UTC
+ * and the producer's tz is what teammates actually want to see.
+ */
 function formatGitTimestamp(unixSeconds, timezone) {
   const sign = timezone.startsWith('-') ? -1 : 1;
   const hours = Number(timezone.slice(1, 3)) || 0;
@@ -197,14 +249,21 @@ function formatGitTimestamp(unixSeconds, timezone) {
   ].join('');
 }
 
+/**
+ * Identify which CLI invoked this hook so the sender can pick a matching
+ * generator. Claude Code injects CLAUDE_PROJECT_DIR into hook subprocesses;
+ * Codex does not. Calling `codex` from a Claude session (or vice versa)
+ * fails with "file not found" because the other CLI isn't on PATH.
+ */
 function detectCli() {
-  // Claude Code injects CLAUDE_PROJECT_DIR into hook subprocesses; Codex does
-  // not. Sender uses this to pick the right CLI for summary generation —
-  // calling `codex` from a Claude session fails because codex isn't on PATH.
   if (process.env.CLAUDE_PROJECT_DIR) return 'claude';
   return 'codex';
 }
 
+/**
+ * Build the JSON blob piped into Sender.exe over stdin. Includes the cli tag
+ * so Sender knows which generator to use for Auto-generate.
+ */
 function buildSenderPayload(config, commit, cli) {
   return JSON.stringify({
     author: config.self || '',
@@ -215,6 +274,11 @@ function buildSenderPayload(config, commit, cli) {
   }, null, 2);
 }
 
+/**
+ * Case-insensitive check for the Stop hook event. Stop is the only event
+ * that should actually open the sender; SessionStart fires just to record a
+ * baseline for the "did HEAD change?" comparison.
+ */
 function isStopEvent(eventName) {
   return String(eventName || '').toLowerCase() === 'stop';
 }

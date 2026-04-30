@@ -21,6 +21,11 @@ public sealed partial class SenderHostWindow : Window
     private readonly SenderPayload _payload;
     private string _generatedSummary = "";
 
+    /// <summary>
+    /// Sender process is launched by the producer hook with the commit blob
+    /// piped over stdin. Read it once at construction time; the window keeps
+    /// it as immutable state for the rest of its lifecycle.
+    /// </summary>
     public SenderHostWindow()
     {
         _payload = SenderPayload.FromJson(ReadStdin());
@@ -28,6 +33,11 @@ public sealed partial class SenderHostWindow : Window
         ConfigureWindow();
     }
 
+    /// <summary>
+    /// Apply the WinUI window chrome: fixed size, custom title bar, no
+    /// minimize/maximize, centered on the active monitor. Called once at
+    /// construction; the window isn't designed to be re-positioned later.
+    /// </summary>
     private void ConfigureWindow()
     {
         var hwnd = WindowNative.GetWindowHandle(this);
@@ -57,11 +67,20 @@ public sealed partial class SenderHostWindow : Window
         appWindow.MoveAndResize(new RectInt32(x, y, WindowWidth, WindowHeight));
     }
 
+    /// <summary>
+    /// Kick off the entrance fade-in animation once XAML layout is ready.
+    /// Wired from the root Grid's Loaded event in XAML.
+    /// </summary>
     private void OnRootLoaded(object sender, RoutedEventArgs e)
     {
         EnterStoryboard.Begin();
     }
 
+    /// <summary>
+    /// Send button handler: validate, push the row to Supabase, then close on
+    /// success. All three buttons are disabled during the round-trip so the
+    /// user can't double-submit while the request is in flight.
+    /// </summary>
     private async void OnSendClick(object sender, RoutedEventArgs e)
     {
         var summary = SummaryTextBox.Text.Trim();
@@ -94,13 +113,24 @@ public sealed partial class SenderHostWindow : Window
         }
     }
 
+    /// <summary>
+    /// Cancel button handler: close without sending. Closing the window from
+    /// the title bar X has the same effect.
+    /// </summary>
     private void OnCancelClick(object sender, RoutedEventArgs e)
     {
         Close();
     }
 
+    /// <summary>
+    /// Auto-generate button handler. First click invokes the CLI to produce a
+    /// summary; subsequent clicks just re-paste the cached result so the user
+    /// doesn't accidentally burn another CLI call after editing the textbox.
+    /// </summary>
     private async void OnAutoGenerateClick(object sender, RoutedEventArgs e)
     {
+        // Cache hit — restore the last generated summary instead of
+        // regenerating. The user may have edited the textbox manually since.
         if (!string.IsNullOrWhiteSpace(_generatedSummary))
         {
             SummaryTextBox.Text = _generatedSummary;
@@ -317,6 +347,10 @@ public sealed partial class SenderHostWindow : Window
         }
     }
 
+    /// <summary>
+    /// Append a line to the sender's local debug log. Best-effort; a failure
+    /// here must not surface to the user since the sender UI has no console.
+    /// </summary>
     private static void LogSender(string message)
     {
         try
@@ -328,6 +362,11 @@ public sealed partial class SenderHostWindow : Window
         }
     }
 
+    /// <summary>
+    /// Build the prompt fed into the chosen CLI. The shape is intentionally
+    /// minimal — we want a 1-2 sentence teammate-facing handoff, not a
+    /// breakdown — so the prompt explicitly forbids markdown and bullets.
+    /// </summary>
     private string BuildSummaryPrompt()
     {
         var files = _payload.ChangedFiles is { ValueKind: JsonValueKind.Array } changedFiles
@@ -354,6 +393,12 @@ public sealed partial class SenderHostWindow : Window
         });
     }
 
+    /// <summary>
+    /// Flatten a multi-line CLI response into a single trimmed line.
+    /// Both Codex and Claude sometimes wrap their output with leading/trailing
+    /// blank lines or split a single sentence across hard line breaks; this
+    /// keeps the textbox clean regardless.
+    /// </summary>
     private static string NormalizeSummary(string summary)
     {
         return string.Join(
@@ -365,6 +410,11 @@ public sealed partial class SenderHostWindow : Window
             .Trim();
     }
 
+    /// <summary>
+    /// POST the summary row to the Supabase shared_contexts table via REST.
+    /// Returns Ok on 2xx; Fail carries the HTTP status + body so the user
+    /// gets actionable feedback instead of a generic "send failed".
+    /// </summary>
     private async Task<SendResult> InsertSharedContextAsync(string summary)
     {
         if (!_payload.HasSupabaseConfig || string.IsNullOrWhiteSpace(_payload.Author) || string.IsNullOrWhiteSpace(_payload.Branch))
@@ -413,6 +463,11 @@ public sealed partial class SenderHostWindow : Window
         }
     }
 
+    /// <summary>
+    /// Cap a string at `max` characters with an ellipsis, used for error
+    /// messages bubbled into ContentDialog so a multi-KB stderr or response
+    /// body doesn't push the dialog off screen.
+    /// </summary>
     private static string Truncate(string value, int max)
     {
         if (value.Length <= max)
@@ -422,6 +477,10 @@ public sealed partial class SenderHostWindow : Window
         return value.Substring(0, max) + "...";
     }
 
+    /// <summary>
+    /// Show a modal error dialog over the sender window. Caller awaits the
+    /// dismissal so the UI doesn't re-enable buttons before the user sees it.
+    /// </summary>
     private async Task ShowErrorAsync(string title, string message)
     {
         var dialog = new Microsoft.UI.Xaml.Controls.ContentDialog
@@ -434,6 +493,12 @@ public sealed partial class SenderHostWindow : Window
         await dialog.ShowAsync();
     }
 
+    /// <summary>
+    /// Read the full stdin stream as a string, or empty if stdin isn't piped
+    /// (e.g. when the .exe is launched directly for debugging without the
+    /// producer hook). Failures are swallowed — the sender then runs with an
+    /// empty payload and surfaces a "missing repo_root" error on Auto-generate.
+    /// </summary>
     private static string ReadStdin()
     {
         try
@@ -449,6 +514,11 @@ public sealed partial class SenderHostWindow : Window
         return string.Empty;
     }
 
+    /// <summary>
+    /// Strongly-typed view over the JSON blob the producer hook pipes in.
+    /// All getters are safe defaults so a missing field becomes an empty
+    /// string instead of a NullReferenceException downstream.
+    /// </summary>
     private sealed class SenderPayload
     {
         public string Author { get; private init; } = "";
@@ -465,6 +535,11 @@ public sealed partial class SenderHostWindow : Window
             !string.IsNullOrWhiteSpace(Supabase.Url) &&
             !string.IsNullOrWhiteSpace(Supabase.Key);
 
+        /// <summary>
+        /// Parse the producer-hook payload. Returns an empty payload on any
+        /// JSON error so the sender window still opens — the user can then
+        /// type a manual summary even if Auto-generate is broken.
+        /// </summary>
         public static SenderPayload FromJson(string json)
         {
             if (string.IsNullOrWhiteSpace(json))
@@ -495,6 +570,10 @@ public sealed partial class SenderHostWindow : Window
             }
         }
 
+        /// <summary>
+        /// Read a string property from the payload, returning empty if the
+        /// field is missing or a non-string (e.g. null or number).
+        /// </summary>
         private static string GetString(JsonElement root, string name)
         {
             return root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
@@ -502,6 +581,10 @@ public sealed partial class SenderHostWindow : Window
                 : string.Empty;
         }
 
+        /// <summary>
+        /// Clone a JSON element off the parent document so it stays valid
+        /// after the source JsonDocument is disposed at the end of FromJson.
+        /// </summary>
         private static JsonElement? CloneElement(JsonElement root, string name)
         {
             return root.TryGetProperty(name, out var value)
@@ -509,6 +592,10 @@ public sealed partial class SenderHostWindow : Window
                 : null;
         }
 
+        /// <summary>
+        /// Pull the nested supabase config out of the payload. Null when the
+        /// producer didn't include it (e.g. Supabase not yet configured).
+        /// </summary>
         private static SupabaseConfig? ReadSupabase(JsonElement root)
         {
             if (!root.TryGetProperty("supabase", out var supabase) || supabase.ValueKind != JsonValueKind.Object)
@@ -524,12 +611,21 @@ public sealed partial class SenderHostWindow : Window
         }
     }
 
+    /// <summary>
+    /// Supabase REST endpoint + anon/service key copied out of the producer
+    /// hook payload. Both fields must be non-empty for sends to work.
+    /// </summary>
     private sealed class SupabaseConfig
     {
         public string Url { get; init; } = "";
         public string Key { get; init; } = "";
     }
 
+    /// <summary>
+    /// Result type for InsertSharedContextAsync. Carries an error message on
+    /// failure so the dialog can show why the send failed instead of a
+    /// generic message.
+    /// </summary>
     private sealed class SendResult
     {
         private SendResult(bool success, string errorMessage)
@@ -555,6 +651,11 @@ public sealed partial class SenderHostWindow : Window
         }
     }
 
+    /// <summary>
+    /// Result type for the CLI summary generators. Carries either the cleaned
+    /// summary text (Ok) or an error message (Fail). Generators never throw
+    /// upstream — exceptions are caught and converted to Fail.
+    /// </summary>
     private sealed class SummaryResult
     {
         private SummaryResult(bool success, string summary, string errorMessage)
@@ -583,6 +684,11 @@ public sealed partial class SenderHostWindow : Window
         }
     }
 
+    /// <summary>
+    /// Wire shape for a Supabase shared_contexts row. Property names match
+    /// the table columns via JsonPropertyName so System.Text.Json serializes
+    /// to the exact keys PostgREST expects.
+    /// </summary>
     private sealed class SharedContextPayload
     {
         [JsonPropertyName("member_name")]
