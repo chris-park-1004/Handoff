@@ -320,6 +320,9 @@
             <pages:TeamView
                 x:Name="TeamRoot"
                 Visibility="Collapsed" />
+            <pages:ActivityView
+                x:Name="ActivityRoot"
+                Visibility="Collapsed" />
             </Grid>
         </NavigationView>
     </Grid>

@@ -94,7 +94,7 @@ public sealed class SupabaseClient : IDisposable
 
         try
         {
-            string path = RestRoot + SharedContextsTable + "?select=*";
+            string path = RestRoot + SharedContextsTable + "?select=*&order=updated_at.desc";
             using HttpRequestMessage req = this.BuildRequest(HttpMethod.Get, path);
             using HttpResponseMessage resp = await this._http.SendAsync(req, ct).ConfigureAwait(false);
             string body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
