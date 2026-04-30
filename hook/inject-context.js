@@ -117,11 +117,10 @@ function findNewSharedContexts(self, teamMembers, watermarks, rows) {
     if (!row || !row.member_name || !row.branch) continue;
     if (self && row.member_name === self) continue;
 
-    // Missing roster entry => treated as subscribed (matches daemon's
-    // opt-out default for newly discovered members). Explicit subscribe:false
-    // is the only thing that filters a member out.
+    // Allow-list: only inject from members explicitly marked subscribe:true.
+    // Unknown members and entries with subscribe omitted/false are skipped.
     const entry = teamMembers.find(m => m && m.name === row.member_name);
-    if (entry && entry.subscribe === false) continue;
+    if (!entry || entry.subscribe !== true) continue;
 
     // Hash is computed client-side from the row JSON — the server no longer
     // stores it. Stable across runs because we always serialize the same
