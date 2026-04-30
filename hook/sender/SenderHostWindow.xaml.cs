@@ -15,6 +15,9 @@ public sealed partial class SenderHostWindow : Window
 {
     private const int WindowWidth = 560;
     private const int WindowHeight = 360;
+    private static readonly string SenderDebugLog = Path.Combine(
+        AppContext.BaseDirectory,
+        "handoff-sender-debug.log");
     private readonly SenderPayload _payload;
     private string _generatedSummary = "";
 
@@ -111,16 +114,16 @@ public sealed partial class SenderHostWindow : Window
         SummaryTextBox.Text = "Generating summary...";
         try
         {
-            var summary = await GenerateSummaryAsync();
-            if (string.IsNullOrWhiteSpace(summary))
+            var result = await GenerateSummaryAsync();
+            if (!result.Success)
             {
                 SummaryTextBox.Text = previousText;
-                await ShowErrorAsync("Auto-generate failed", "Codex did not return a summary for this commit.");
+                await ShowErrorAsync("Auto-generate failed", result.ErrorMessage);
                 return;
             }
 
-            _generatedSummary = summary;
-            SummaryTextBox.Text = summary;
+            _generatedSummary = result.Summary;
+            SummaryTextBox.Text = result.Summary;
         }
         finally
         {
@@ -130,11 +133,11 @@ public sealed partial class SenderHostWindow : Window
         }
     }
 
-    private async Task<string> GenerateSummaryAsync()
+    private async Task<SummaryResult> GenerateSummaryAsync()
     {
         if (string.IsNullOrWhiteSpace(_payload.RepoRoot))
         {
-            return string.Empty;
+            return SummaryResult.Fail("Missing repo_root in the sender payload.");
         }
 
         var localDir = Path.Combine(_payload.RepoRoot, ".local");
@@ -169,7 +172,7 @@ public sealed partial class SenderHostWindow : Window
             using var process = Process.Start(startInfo);
             if (process is null)
             {
-                return string.Empty;
+                return SummaryResult.Fail("Could not start the Codex CLI process.");
             }
 
             await process.StandardInput.WriteAsync(BuildSummaryPrompt());
@@ -182,25 +185,50 @@ public sealed partial class SenderHostWindow : Window
             if (exited != waitTask)
             {
                 try { process.Kill(entireProcessTree: true); } catch { }
-                return string.Empty;
+                LogSender("summary generation timed out");
+                return SummaryResult.Fail("Codex summary generation timed out after 3 minutes.");
             }
 
             var stdout = await stdoutTask;
-            _ = await stderrTask;
+            var stderr = await stderrTask;
+            if (process.ExitCode != 0)
+            {
+                LogSender("codex exec failed: exit=" + process.ExitCode + ", stderr=" + stderr);
+                return SummaryResult.Fail("Codex exited with code " + process.ExitCode + ": " + Truncate(stderr, 700));
+            }
 
             var summary = File.Exists(outputPath)
                 ? await File.ReadAllTextAsync(outputPath)
                 : stdout;
 
-            return NormalizeSummary(summary);
+            var normalized = NormalizeSummary(summary);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                LogSender("codex returned empty summary. stdout=" + stdout + ", stderr=" + stderr);
+                return SummaryResult.Fail("Codex completed but returned an empty summary.");
+            }
+
+            return SummaryResult.Ok(normalized);
         }
-        catch
+        catch (Exception ex)
         {
-            return string.Empty;
+            LogSender("summary generation exception: " + ex);
+            return SummaryResult.Fail(ex.GetType().Name + ": " + ex.Message);
         }
         finally
         {
             try { File.Delete(outputPath); } catch { }
+        }
+    }
+
+    private static void LogSender(string message)
+    {
+        try
+        {
+            File.AppendAllText(SenderDebugLog, DateTime.UtcNow.ToString("O") + " " + message + Environment.NewLine);
+        }
+        catch
+        {
         }
     }
 
@@ -425,6 +453,34 @@ public sealed partial class SenderHostWindow : Window
         {
             return new SendResult(false, string.IsNullOrWhiteSpace(message)
                 ? "The shared context could not be saved to Supabase."
+                : message);
+        }
+    }
+
+    private sealed class SummaryResult
+    {
+        private SummaryResult(bool success, string summary, string errorMessage)
+        {
+            Success = success;
+            Summary = summary;
+            ErrorMessage = errorMessage;
+        }
+
+        public bool Success { get; }
+
+        public string Summary { get; }
+
+        public string ErrorMessage { get; }
+
+        public static SummaryResult Ok(string summary)
+        {
+            return new SummaryResult(true, summary, "");
+        }
+
+        public static SummaryResult Fail(string message)
+        {
+            return new SummaryResult(false, "", string.IsNullOrWhiteSpace(message)
+                ? "Codex did not return a summary for this commit."
                 : message);
         }
     }

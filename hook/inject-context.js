@@ -1,0 +1,1 @@
+require('./receive-shared-context');
