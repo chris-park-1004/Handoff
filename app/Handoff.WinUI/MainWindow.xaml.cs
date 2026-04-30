@@ -53,6 +53,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         this.InitializeComponent();
+        this.AppWindow.SetIcon("Assets/Logo.ico");
         this.ExtendsContentIntoTitleBar = true;
         this.SetTitleBar(this.AppTitleBar);
         this.ConfigureMinimumWindowSize();

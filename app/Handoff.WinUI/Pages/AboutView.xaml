@@ -19,18 +19,10 @@
                 BorderThickness="1"
                 CornerRadius="10">
                 <StackPanel Orientation="Horizontal" Spacing="20">
-                    <Border
+                    <Image
                         Width="64"
                         Height="64"
-                        Background="{ThemeResource SystemAccentColor}"
-                        CornerRadius="12">
-                        <FontIcon
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Center"
-                            FontSize="30"
-                            Foreground="White"
-                            Glyph="&#xE8AB;" />
-                    </Border>
+                        Source="ms-appx:///Assets/Logo.png" />
 
                     <StackPanel VerticalAlignment="Center" Spacing="4">
                         <TextBlock
