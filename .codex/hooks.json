@@ -6,9 +6,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node hook/inject-context.js",
+            "command": "node hook/receive-shared-context.js",
             "timeout": 30,
             "statusMessage": "Checking team context"
+          },
+          {
+            "type": "command",
+            "command": "node hook/shared-context-summary.js",
+            "timeout": 300,
+            "statusMessage": "Checking local commit"
           }
         ]
       }
@@ -18,9 +24,21 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node hook/inject-context.js",
+            "command": "node hook/receive-shared-context.js",
             "timeout": 30,
             "statusMessage": "Checking team context"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node hook/shared-context-summary.js",
+            "timeout": 300,
+            "statusMessage": "Checking local commit"
           }
         ]
       }
