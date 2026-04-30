@@ -480,6 +480,7 @@ public sealed partial class MainWindow : Window
         this.ContentRoot.Visibility = tag == "dashboard" ? Visibility.Visible : Visibility.Collapsed;
         this.TeamRoot.Visibility = tag == "team" ? Visibility.Visible : Visibility.Collapsed;
         this.ActivityRoot.Visibility = tag == "activity" ? Visibility.Visible : Visibility.Collapsed;
+        this.AboutRoot.Visibility = tag == "about" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void SetStatus(string title, string message, InfoBarSeverity severity)

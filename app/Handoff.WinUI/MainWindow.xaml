@@ -36,6 +36,13 @@
                 <NavigationViewItem x:Name="TeamNavItem" Content="Team" Icon="People" Tag="team" />
                 <NavigationViewItem x:Name="ActivityNavItem" Content="Activity" Icon="Sync" Tag="activity" />
             </NavigationView.MenuItems>
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem x:Name="AboutNavItem" Content="About" Tag="about">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE946;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
 
             <Grid>
             <Grid
@@ -322,6 +329,9 @@
                 Visibility="Collapsed" />
             <pages:ActivityView
                 x:Name="ActivityRoot"
+                Visibility="Collapsed" />
+            <pages:AboutView
+                x:Name="AboutRoot"
                 Visibility="Collapsed" />
             </Grid>
         </NavigationView>
