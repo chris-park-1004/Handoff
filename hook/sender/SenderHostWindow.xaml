@@ -52,11 +52,24 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <TextBlock
-                Grid.Row="0"
-                Text="Share an update with your team"
-                FontSize="20"
-                FontWeight="SemiBold" />
+            <Grid Grid.Row="0" ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Image
+                    Grid.Column="0"
+                    Width="36"
+                    Height="36"
+                    VerticalAlignment="Center"
+                    Source="ms-appx:///Assets/Logo.png" />
+                <TextBlock
+                    Grid.Column="1"
+                    VerticalAlignment="Center"
+                    Text="Share an update with your team"
+                    FontSize="20"
+                    FontWeight="SemiBold" />
+            </Grid>
 
             <TextBlock
                 Grid.Row="1"

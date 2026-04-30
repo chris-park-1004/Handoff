@@ -45,6 +45,7 @@ public sealed partial class SenderHostWindow : Window
         var appWindow = AppWindow.GetFromWindowId(windowId);
 
         appWindow.Title = "Handoff";
+        appWindow.SetIcon("Assets/Logo.ico");
 
         if (AppWindowTitleBar.IsCustomizationSupported())
         {
