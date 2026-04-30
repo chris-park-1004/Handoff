@@ -63,4 +63,10 @@ public sealed partial class SenderHostWindow : Window
     {
         Close();
     }
+
+    private void OnAutoGenerateClick(object sender, RoutedEventArgs e)
+    {
+        // TODO: replace with real summary generation (git diff / LLM / etc.).
+        SummaryTextBox.Text = "Auto-generated summary placeholder.";
+    }
 }
