@@ -19,6 +19,7 @@ const SENDER_EXE = path.join(
 );
 const LOCK_STALE_MS = 60_000;
 
+// 
 // When the sender opens claude/codex to generate a summary, that child
 // process re-fires hooks. This guard makes the re-fire a silent no-op so we
 // don't recurse into another sender popup mid-generation.
