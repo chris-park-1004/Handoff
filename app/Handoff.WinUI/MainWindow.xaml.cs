@@ -60,8 +60,19 @@ public sealed partial class MainWindow : Window
         this.MembersList.ItemsSource = this._members;
         this.BranchesList.ItemsSource = this._branches;
         this.TeamRoot.SubscriptionChanged += this.OnTeamSubscriptionChanged;
+        this.SettingsRoot.ThemeChanged += (_, theme) => this.ApplyTheme(theme);
         this.Closed += this.OnWindowClosed;
         this.StartSyncService();
+    }
+
+    private void ApplyTheme(string theme)
+    {
+        this.RootLayout.RequestedTheme = theme switch
+        {
+            "Light" => ElementTheme.Light,
+            "Dark" => ElementTheme.Dark,
+            _ => ElementTheme.Default,
+        };
     }
 
     private void StartSyncService()
@@ -93,6 +104,9 @@ public sealed partial class MainWindow : Window
             this._syncService = new SyncService(git, configStore, this._supabase, this._github, repoRoot);
             this._syncService.CycleCompleted += this.OnSyncCycleCompleted;
             this._syncService.Start();
+
+            this.SettingsRoot.Bind(configStore, repoRoot, configPath, logPath);
+            this.ApplyTheme(snapshot.Theme ?? "System");
 
             this.LoadWorkspaceConfig();
             _ = this.RefreshTeamAsync();
@@ -482,6 +496,7 @@ public sealed partial class MainWindow : Window
         this.TeamRoot.Visibility = tag == "team" ? Visibility.Visible : Visibility.Collapsed;
         this.ActivityRoot.Visibility = tag == "activity" ? Visibility.Visible : Visibility.Collapsed;
         this.AboutRoot.Visibility = tag == "about" ? Visibility.Visible : Visibility.Collapsed;
+        this.SettingsRoot.Visibility = tag == "settings" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void SetStatus(string title, string message, InfoBarSeverity severity)
