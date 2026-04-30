@@ -56,39 +56,25 @@
                 BorderThickness="1"
                 CornerRadius="8"
                 Padding="16">
-                <Grid RowSpacing="10">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-
+                <ScrollViewer
+                    VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled">
                     <TextBlock
-                        Grid.Row="0"
-                        x:Name="CommitMessageText"
-                        FontWeight="SemiBold"
-                        FontSize="14"
-                        TextWrapping="Wrap" />
-
-                    <ScrollViewer
-                        Grid.Row="1"
-                        VerticalScrollBarVisibility="Auto"
-                        HorizontalScrollBarVisibility="Disabled">
-                        <TextBlock
-                            x:Name="SummaryText"
-                            TextWrapping="Wrap"
-                            IsTextSelectionEnabled="True"
-                            LineHeight="22"
-                            Opacity="0.9" />
-                    </ScrollViewer>
-                </Grid>
+                        x:Name="SummaryText"
+                        TextWrapping="Wrap"
+                        IsTextSelectionEnabled="True"
+                        LineHeight="22"
+                        Opacity="0.9" />
+                </ScrollViewer>
             </Border>
 
             <TextBlock
                 Grid.Row="2"
-                x:Name="ChangedFilesText"
-                Opacity="0.6"
-                FontSize="12"
-                TextWrapping="Wrap" />
+                x:Name="CommitDetailText"
+                Opacity="0.7"
+                FontSize="13"
+                TextWrapping="Wrap"
+                IsTextSelectionEnabled="True" />
 
             <Border
                 Grid.Row="3"
