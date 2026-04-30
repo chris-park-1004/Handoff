@@ -322,14 +322,10 @@ try {
     process.exit(0);
   }
 
-  // TEST MODE: while validating the sender flow, open the producer window on
-  // every Stop event even when HEAD did not change. Re-enable the guard below
-  // when the real flow should prompt only once per new local commit.
-  //
-  // if (state.last_seen_commit_sha === commit.commit_sha) {
-  //   log(`${event}: no new local commit — silent exit`);
-  //   process.exit(0);
-  // }
+  if (state.last_seen_commit_sha === commit.commit_sha) {
+    log(`${event}: no new local commit — silent exit`);
+    process.exit(0);
+  }
 
   if (!fs.existsSync(SENDER_EXE)) {
     log(`${event}: sender exe missing at ${SENDER_EXE}`);
