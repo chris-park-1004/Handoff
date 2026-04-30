@@ -39,6 +39,7 @@
                         Text="Latest sync"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <TextBlock
+                        x:Name="LatestSyncText"
                         Text="Waiting"
                         Style="{ThemeResource SubtitleTextBlockStyle}" />
                 </StackPanel>
@@ -56,6 +57,7 @@
                         Text="Context rows"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <TextBlock
+                        x:Name="ContextRowsText"
                         Text="0"
                         Style="{ThemeResource SubtitleTextBlockStyle}" />
                 </StackPanel>
@@ -73,6 +75,7 @@
                         Text="Status"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <TextBlock
+                        x:Name="ActivityStatusText"
                         Text="Idle"
                         Style="{ThemeResource SubtitleTextBlockStyle}" />
                 </StackPanel>
@@ -94,10 +97,10 @@
 
                 <Grid ColumnSpacing="16">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="160" />
-                        <ColumnDefinition Width="180" />
+                        <ColumnDefinition Width="150" />
+                        <ColumnDefinition Width="220" />
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="160" />
+                        <ColumnDefinition Width="180" />
                     </Grid.ColumnDefinitions>
 
                     <TextBlock
@@ -106,54 +109,76 @@
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <TextBlock
                         Grid.Column="1"
-                        Text="Source"
+                        Text="Member / Branch"
                         FontWeight="SemiBold"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <TextBlock
                         Grid.Column="2"
-                        Text="Event"
+                        Text="Context"
                         FontWeight="SemiBold"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <TextBlock
                         Grid.Column="3"
-                        Text="Result"
+                        Text="Commit"
                         FontWeight="SemiBold"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </Grid>
 
                 <ListView
+                    x:Name="ActivityList"
                     Grid.Row="1"
                     SelectionMode="None">
-                    <ListViewItem>
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="160" />
-                                <ColumnDefinition Width="180" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="160" />
-                            </Grid.ColumnDefinitions>
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="220" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="180" />
+                                </Grid.ColumnDefinitions>
 
-                            <TextBlock
-                                VerticalAlignment="Center"
-                                Text="Waiting"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <TextBlock
-                                Grid.Column="1"
-                                VerticalAlignment="Center"
-                                Text="Daemon"
-                                TextTrimming="CharacterEllipsis" />
-                            <TextBlock
-                                Grid.Column="2"
-                                VerticalAlignment="Center"
-                                Text="No activity loaded yet"
-                                TextTrimming="CharacterEllipsis" />
-                            <TextBlock
-                                Grid.Column="3"
-                                VerticalAlignment="Center"
-                                Text="Pending"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        </Grid>
-                    </ListViewItem>
+                                <TextBlock
+                                    VerticalAlignment="Top"
+                                    Text="{Binding UpdatedAt}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextTrimming="CharacterEllipsis" />
+                                <StackPanel
+                                    Grid.Column="1"
+                                    Spacing="2">
+                                    <TextBlock
+                                        Text="{Binding MemberName}"
+                                        TextTrimming="CharacterEllipsis" />
+                                    <TextBlock
+                                        Text="{Binding Branch}"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <StackPanel
+                                    Grid.Column="2"
+                                    Spacing="2">
+                                    <TextBlock
+                                        Text="{Binding Title}"
+                                        TextTrimming="CharacterEllipsis" />
+                                    <TextBlock
+                                        Text="{Binding Detail}"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <StackPanel
+                                    Grid.Column="3"
+                                    Spacing="2">
+                                    <TextBlock
+                                        Text="{Binding CommitSha}"
+                                        TextTrimming="CharacterEllipsis" />
+                                    <TextBlock
+                                        Text="{Binding Metadata}"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
                 </ListView>
             </Grid>
         </Border>

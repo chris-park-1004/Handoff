@@ -146,6 +146,7 @@ public sealed partial class MainWindow : Window
             // through silently — the panel keeps its last-known content rather
             // than blanking out on a transient Supabase blip.
             await this.RefreshBranchesAsync();
+            await this.RefreshActivityAsync(result.SupabaseReachable);
         });
     }
 
@@ -194,6 +195,26 @@ public sealed partial class MainWindow : Window
             // Swallow — the SupabaseClient already logged the underlying failure;
             // the panel just keeps its previous state on this cycle.
             Logger.LogError("MainWindow", "RefreshBranches", ex);
+        }
+    }
+
+    private async Task RefreshActivityAsync(bool supabaseReachable)
+    {
+        if (this._supabase is null)
+        {
+            return;
+        }
+
+        try
+        {
+            this.ActivityRoot.RenderLoading();
+            IReadOnlyList<SharedContext> rows = await this._supabase.SelectAllAsync();
+            this.ActivityRoot.RenderSharedContexts(rows, supabaseReachable);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("MainWindow", "RefreshActivity", ex);
+            this.ActivityRoot.RenderSharedContexts(Array.Empty<SharedContext>(), false);
         }
     }
 
@@ -326,6 +347,7 @@ public sealed partial class MainWindow : Window
             }
 
             this.RenderDiscoveryDetails(merged, branches);
+            await this.RefreshActivityAsync(result.SupabaseReachable);
             this.SetStatus(
                 "Discovery complete",
                 "Found " + branches.Count + " rows across " + merged.TeamMembers.Count + " members.",
