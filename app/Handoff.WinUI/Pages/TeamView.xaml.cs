@@ -32,11 +32,17 @@ public sealed partial class TeamView : UserControl
         SortedSet<string> names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string name in memberByName.Keys)
         {
-            names.Add(name);
+            if (!string.Equals(name, config.Self, StringComparison.OrdinalIgnoreCase))
+            {
+                names.Add(name);
+            }
         }
         foreach (string name in configByName.Keys)
         {
-            names.Add(name);
+            if (!string.Equals(name, config.Self, StringComparison.OrdinalIgnoreCase))
+            {
+                names.Add(name);
+            }
         }
 
         this._suppressToggleEvents = true;
