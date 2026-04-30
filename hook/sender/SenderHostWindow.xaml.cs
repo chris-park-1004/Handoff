@@ -133,18 +133,43 @@ public sealed partial class SenderHostWindow : Window
         }
     }
 
-    private async Task<SummaryResult> GenerateSummaryAsync()
+    /// <summary>
+    /// Dispatches summary generation to whichever CLI invoked the hook that
+    /// opened this sender. Only the invoking CLI is reliably on PATH for the
+    /// spawned sender process — calling `codex` from a Claude session (or vice
+    /// versa) fails with "file not found" because the other CLI isn't there.
+    /// </summary>
+    private Task<SummaryResult> GenerateSummaryAsync()
     {
         if (string.IsNullOrWhiteSpace(_payload.RepoRoot))
         {
-            return SummaryResult.Fail("Missing repo_root in the sender payload.");
+            return Task.FromResult(SummaryResult.Fail("Missing repo_root in the sender payload."));
         }
 
-        var localDir = Path.Combine(_payload.RepoRoot, ".local");
-        Directory.CreateDirectory(localDir);
-        var outputPath = Path.Combine(localDir, "summary-response-" + Environment.ProcessId + ".txt");
+        string cli = string.IsNullOrWhiteSpace(_payload.Cli) ? "codex" : _payload.Cli.Trim().ToLowerInvariant();
+        if (cli == "claude")
+        {
+            return GenerateSummaryWithClaudeAsync();
+        }
+        return GenerateSummaryWithCodexAsync();
+    }
 
-        var startInfo = new ProcessStartInfo
+    /// <summary>
+    /// Runs `codex exec --ephemeral` in read-only sandbox. -c codex_hooks=false
+    /// silences Codex's hook chain for this child invocation, and the
+    /// HANDOFF_SUMMARY_GENERATION env var is the JS-side guard the team-context
+    /// hooks check so they exit early — second line of defense if the toml flag
+    /// is ever ignored.
+    /// </summary>
+    private async Task<SummaryResult> GenerateSummaryWithCodexAsync()
+    {
+        string localDir = Path.Combine(_payload.RepoRoot, ".local");
+        Directory.CreateDirectory(localDir);
+        // PID-suffixed so two senders running concurrently don't trample each
+        // other's response file. Codex writes its final answer here via -o.
+        string outputPath = Path.Combine(localDir, "summary-response-" + Environment.ProcessId + ".txt");
+
+        ProcessStartInfo startInfo = new ProcessStartInfo
         {
             FileName = "codex",
             UseShellExecute = false,
@@ -169,7 +194,7 @@ public sealed partial class SenderHostWindow : Window
 
         try
         {
-            using var process = Process.Start(startInfo);
+            using Process? process = Process.Start(startInfo);
             if (process is null)
             {
                 return SummaryResult.Fail("Could not start the Codex CLI process.");
@@ -178,30 +203,30 @@ public sealed partial class SenderHostWindow : Window
             await process.StandardInput.WriteAsync(BuildSummaryPrompt());
             process.StandardInput.Close();
 
-            var stdoutTask = process.StandardOutput.ReadToEndAsync();
-            var stderrTask = process.StandardError.ReadToEndAsync();
-            var waitTask = process.WaitForExitAsync();
-            var exited = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromMinutes(3)));
+            Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
+            Task<string> stderrTask = process.StandardError.ReadToEndAsync();
+            Task waitTask = process.WaitForExitAsync();
+            Task exited = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromMinutes(3)));
             if (exited != waitTask)
             {
                 try { process.Kill(entireProcessTree: true); } catch { }
-                LogSender("summary generation timed out");
+                LogSender("codex summary generation timed out");
                 return SummaryResult.Fail("Codex summary generation timed out after 3 minutes.");
             }
 
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
+            string stdout = await stdoutTask;
+            string stderr = await stderrTask;
             if (process.ExitCode != 0)
             {
                 LogSender("codex exec failed: exit=" + process.ExitCode + ", stderr=" + stderr);
                 return SummaryResult.Fail("Codex exited with code " + process.ExitCode + ": " + Truncate(stderr, 700));
             }
 
-            var summary = File.Exists(outputPath)
+            string summary = File.Exists(outputPath)
                 ? await File.ReadAllTextAsync(outputPath)
                 : stdout;
 
-            var normalized = NormalizeSummary(summary);
+            string normalized = NormalizeSummary(summary);
             if (string.IsNullOrWhiteSpace(normalized))
             {
                 LogSender("codex returned empty summary. stdout=" + stdout + ", stderr=" + stderr);
@@ -212,12 +237,83 @@ public sealed partial class SenderHostWindow : Window
         }
         catch (Exception ex)
         {
-            LogSender("summary generation exception: " + ex);
+            LogSender("codex summary generation exception: " + ex);
             return SummaryResult.Fail(ex.GetType().Name + ": " + ex.Message);
         }
         finally
         {
             try { File.Delete(outputPath); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Runs `claude -p` (Claude Code print mode). Plan permission mode forbids
+    /// tool/file mutation, Haiku keeps latency down for this short prompt, and
+    /// HANDOFF_SUMMARY_GENERATION makes the JS hooks fire-and-exit so we don't
+    /// recurse into another sender popup. Output is on stdout — no temp file.
+    /// </summary>
+    private async Task<SummaryResult> GenerateSummaryWithClaudeAsync()
+    {
+        ProcessStartInfo startInfo = new ProcessStartInfo
+        {
+            FileName = "claude",
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            WorkingDirectory = _payload.RepoRoot,
+        };
+        startInfo.ArgumentList.Add("-p");
+        startInfo.ArgumentList.Add("--permission-mode");
+        startInfo.ArgumentList.Add("plan");
+        startInfo.ArgumentList.Add("--model");
+        startInfo.ArgumentList.Add("claude-haiku-4-5-20251001");
+        startInfo.Environment["HANDOFF_SUMMARY_GENERATION"] = "1";
+
+        try
+        {
+            using Process? process = Process.Start(startInfo);
+            if (process is null)
+            {
+                return SummaryResult.Fail("Could not start the Claude CLI process.");
+            }
+
+            await process.StandardInput.WriteAsync(BuildSummaryPrompt());
+            process.StandardInput.Close();
+
+            Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
+            Task<string> stderrTask = process.StandardError.ReadToEndAsync();
+            Task waitTask = process.WaitForExitAsync();
+            Task exited = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromMinutes(3)));
+            if (exited != waitTask)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                LogSender("claude summary generation timed out");
+                return SummaryResult.Fail("Claude summary generation timed out after 3 minutes.");
+            }
+
+            string stdout = await stdoutTask;
+            string stderr = await stderrTask;
+            if (process.ExitCode != 0)
+            {
+                LogSender("claude -p failed: exit=" + process.ExitCode + ", stderr=" + stderr);
+                return SummaryResult.Fail("Claude exited with code " + process.ExitCode + ": " + Truncate(stderr, 700));
+            }
+
+            string normalized = NormalizeSummary(stdout);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                LogSender("claude returned empty summary. stdout=" + stdout + ", stderr=" + stderr);
+                return SummaryResult.Fail("Claude completed but returned an empty summary.");
+            }
+
+            return SummaryResult.Ok(normalized);
+        }
+        catch (Exception ex)
+        {
+            LogSender("claude summary generation exception: " + ex);
+            return SummaryResult.Fail(ex.GetType().Name + ": " + ex.Message);
         }
     }
 
@@ -361,6 +457,7 @@ public sealed partial class SenderHostWindow : Window
         public string CommitMessage { get; private init; } = "";
         public string Timestamp { get; private init; } = "";
         public string RepoRoot { get; private init; } = "";
+        public string Cli { get; private init; } = "";
         public JsonElement? ChangedFiles { get; private init; }
         public SupabaseConfig? Supabase { get; private init; }
         public bool HasSupabaseConfig =>
@@ -387,6 +484,7 @@ public sealed partial class SenderHostWindow : Window
                     CommitMessage = GetString(root, "commit_message"),
                     Timestamp = GetString(root, "timestamp"),
                     RepoRoot = GetString(root, "repo_root"),
+                    Cli = GetString(root, "cli"),
                     ChangedFiles = CloneElement(root, "changed_files"),
                     Supabase = ReadSupabase(root),
                 };

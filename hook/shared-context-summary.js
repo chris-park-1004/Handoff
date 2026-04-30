@@ -197,11 +197,20 @@ function formatGitTimestamp(unixSeconds, timezone) {
   ].join('');
 }
 
-function buildSenderPayload(config, commit) {
+function detectCli() {
+  // Claude Code injects CLAUDE_PROJECT_DIR into hook subprocesses; Codex does
+  // not. Sender uses this to pick the right CLI for summary generation —
+  // calling `codex` from a Claude session fails because codex isn't on PATH.
+  if (process.env.CLAUDE_PROJECT_DIR) return 'claude';
+  return 'codex';
+}
+
+function buildSenderPayload(config, commit, cli) {
   return JSON.stringify({
     author: config.self || '',
     repo_root: REPO_ROOT,
     supabase: config.supabase || null,
+    cli,
     ...commit,
   }, null, 2);
 }
@@ -263,9 +272,10 @@ try {
     process.exit(0);
   }
 
-  log(`${event}: opening sender for ${commit.commit_sha.slice(0, 12)} without pre-generating summary`);
+  const cli = detectCli();
+  log(`${event}: opening sender for ${commit.commit_sha.slice(0, 12)} (cli=${cli}) without pre-generating summary`);
   const result = spawnSync(SENDER_EXE, [], {
-    input: buildSenderPayload(config, commit),
+    input: buildSenderPayload(config, commit, cli),
     encoding: 'utf8',
     windowsHide: false,
   });
