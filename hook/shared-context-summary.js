@@ -60,6 +60,26 @@ function writeJSON(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
+function readLockPid() {
+  try {
+    const text = fs.readFileSync(LOCK_PATH, 'utf8');
+    const firstLine = text.split(/\r?\n/)[0];
+    const pid = Number(firstLine);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error && error.code === 'EPERM';
+  }
+}
+
 /**
  * Try to take an exclusive lock so concurrent producer-side fires (SessionStart
  * + Stop racing on session end) don't both spawn the sender for the same
@@ -76,8 +96,16 @@ function tryAcquireLock() {
   } catch (error) {
     if (error && error.code === 'EEXIST') {
       try {
+        const pid = readLockPid();
+        if (pid !== null && !isProcessAlive(pid)) {
+          log(`clearing producer lock for dead pid ${pid}`);
+          fs.unlinkSync(LOCK_PATH);
+          return tryAcquireLock();
+        }
+
         const age = Date.now() - fs.statSync(LOCK_PATH).mtimeMs;
         if (age > LOCK_STALE_MS) {
+          log(`clearing stale producer lock age=${Math.round(age)}ms`);
           fs.unlinkSync(LOCK_PATH);
           return tryAcquireLock();
         }
@@ -323,10 +351,13 @@ try {
     process.exit(0);
   }
 
-  if (state.last_seen_commit_sha === commit.commit_sha) {
-    log(`${event}: no new local commit — silent exit`);
-    process.exit(0);
-  }
+  // TEST MODE: open the sender on every Stop event even when HEAD did not
+  // change. Re-enable this guard for production so each commit prompts once.
+  //
+  // if (state.last_seen_commit_sha === commit.commit_sha) {
+  //   log(`${event}: no new local commit — silent exit`);
+  //   process.exit(0);
+  // }
 
   if (!fs.existsSync(SENDER_EXE)) {
     log(`${event}: sender exe missing at ${SENDER_EXE}`);
