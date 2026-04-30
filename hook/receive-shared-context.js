@@ -18,10 +18,16 @@ const RECEIVER_EXE = path.join(
   'Handoff.Receiver.exe'
 );
 const DEBUG_LOG = path.join(REPO_ROOT, '.local', 'team-context-debug.log');
+const DIAGNOSTICS_PATH = path.join(REPO_ROOT, '.local', 'receive-shared-context-diagnostics.json');
 const LOCK_STALE_MS = 60_000;
+
+if (process.env.HANDOFF_SUMMARY_GENERATION === '1') {
+  process.exit(0);
+}
 
 function log(msg) {
   try {
+    fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
     fs.appendFileSync(DEBUG_LOG, `${new Date().toISOString()} ${msg}\n`);
   } catch (_) {}
 }
@@ -37,6 +43,15 @@ function readJSON(filePath, fallback) {
 function writeJSON(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+}
+
+function writeDiagnostics(data) {
+  try {
+    writeJSON(DIAGNOSTICS_PATH, {
+      updated_at: new Date().toISOString(),
+      ...data,
+    });
+  } catch (_) {}
 }
 
 function tryAcquireLock() {
@@ -70,6 +85,33 @@ function releaseLock(handle) {
 
 function hashContent(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
+}
+
+function sameName(a, b) {
+  return String(a || '').toLowerCase() === String(b || '').toLowerCase();
+}
+
+function getContextIdentity(row, hash) {
+  const displayKey = `${row.member_name}/${row.branch}`;
+  if (row.id !== null && row.id !== undefined && String(row.id).trim() !== '') {
+    return {
+      displayKey,
+      key: `${displayKey}#${row.id}`,
+    };
+  }
+
+  const parts = [
+    row.commit_sha,
+    row.updated_at,
+    hash.slice(0, 16),
+  ]
+    .map(value => String(value || '').trim())
+    .filter(Boolean);
+
+  return {
+    displayKey,
+    key: `${displayKey}#${parts.join('#') || hash.slice(0, 16)}`,
+  };
 }
 
 // Pulls every shared_contexts row via Supabase REST. We use curl (shipped on
@@ -108,31 +150,53 @@ function fetchSharedContextsFromSupabase(supabase) {
 }
 
 // Filters fetched rows by self-exclusion + subscribe flag, then compares each
-// row's content_hash against watermarks to find what's new for this user.
-// "key" matches the file-based version (member/branch) so existing
-// watermarks.json entries keep working without migration.
+// row's content hash against watermarks to find what's new for this user.
+// New Supabase rows are tracked by id so multiple sends from the same
+// member/branch are each handled once. The legacy member/branch key is still
+// checked so old watermarks do not immediately re-prompt after this change.
 function findNewSharedContexts(self, teamMembers, watermarks, rows) {
   const newItems = [];
+  const skipped = {
+    malformed: 0,
+    self: 0,
+    unsubscribed: 0,
+    watermarked: 0,
+  };
+
   for (const row of rows) {
-    if (!row || !row.member_name || !row.branch) continue;
-    if (self && row.member_name === self) continue;
+    if (!row || !row.member_name || !row.branch) {
+      skipped.malformed += 1;
+      continue;
+    }
+    if (self && sameName(row.member_name, self)) {
+      skipped.self += 1;
+      continue;
+    }
 
     // Allow-list: only inject from members explicitly marked subscribe:true.
     // Unknown members and entries with subscribe omitted/false are skipped.
-    const entry = teamMembers.find(m => m && m.name === row.member_name);
-    if (!entry || entry.subscribe !== true) continue;
+    const entry = teamMembers.find(m => m && sameName(m.name, row.member_name));
+    if (!entry || entry.subscribe !== true) {
+      skipped.unsubscribed += 1;
+      continue;
+    }
 
     // Hash is computed client-side from the row JSON — the server no longer
     // stores it. Stable across runs because we always serialize the same
     // shape (System.Text.Json on the producer matches JSON.stringify here
     // for the columns we read).
     const hash = hashContent(JSON.stringify(row));
-    const key = `${row.member_name}/${row.branch}`;
+    const identity = getContextIdentity(row, hash);
+    const legacyKey = identity.displayKey;
 
-    if (watermarks[key] !== hash) {
-      newItems.push({ key, hash, parsed: row });
+    if (!watermarks[identity.key] && watermarks[legacyKey] !== hash) {
+      newItems.push({ key: identity.key, displayKey: identity.displayKey, hash, parsed: row });
+    } else {
+      skipped.watermarked += 1;
     }
   }
+
+  log(`filter: rows=${rows.length}, new=${newItems.length}, skipped=${JSON.stringify(skipped)}`);
   return newItems;
 }
 
@@ -144,7 +208,7 @@ function buildPreview(items) {
     const sha = p.commit_sha ? ` (${p.commit_sha})` : '';
 
     const lines = [
-      `## From ${item.key}`,
+      `## From ${item.displayKey || item.key}`,
       '',
       `**Summary**: ${summary}`,
     ];
@@ -171,6 +235,7 @@ log(`${event} fired`);
 
 const config = readJSON(CONFIG_PATH, { self: null, 'team-members': [], supabase: null });
 let watermarks = readJSON(WATERMARKS_PATH, {});
+writeJSON(WATERMARKS_PATH, watermarks);
 
 // One Supabase fetch per hook invocation, cached in `rows`. The post-lock
 // recheck uses the same snapshot — re-fetching after the lock would catch
@@ -179,8 +244,17 @@ let watermarks = readJSON(WATERMARKS_PATH, {});
 // (cheap) so we never inject a hash that another instance already consumed.
 const rows = fetchSharedContextsFromSupabase(config.supabase);
 const teamMembers = Array.isArray(config['team-members']) ? config['team-members'] : [];
+log(`config: self=${config.self || '(empty)'}, subscribed=${teamMembers.filter(m => m && m.subscribe === true).map(m => m.name).join(',') || '(none)'}, fetched_rows=${rows.length}`);
 
 const newItems = findNewSharedContexts(config.self, teamMembers, watermarks, rows);
+writeDiagnostics({
+  event,
+  self: config.self || '',
+  subscribed_members: teamMembers.filter(m => m && m.subscribe === true).map(m => m.name),
+  fetched_rows: rows.length,
+  new_items: newItems.map(item => item.key),
+  receiver_exe_exists: fs.existsSync(RECEIVER_EXE),
+});
 
 if (newItems.length === 0) {
   log(`${event}: no new context — silent exit`);
@@ -235,7 +309,10 @@ try {
     // the same content never re-prompts the user. Other exit codes (signal,
     // crash, ENOENT) leave the watermark untouched so the next fire retries.
     if (code === 0 || code === 1) {
-      watermarks[item.key] = item.hash;
+      watermarks[item.key] = {
+        hash: item.hash,
+        seen_at: new Date().toISOString(),
+      };
     } else {
       log(`${event}: gate (${item.key}) did not finish cleanly — watermark unchanged`);
     }
