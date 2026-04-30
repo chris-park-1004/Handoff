@@ -21,43 +21,19 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0" ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-
-                <Border
-                    Grid.Column="0"
-                    Width="40"
-                    Height="40"
-                    CornerRadius="20"
-                    Background="{ThemeResource AccentFillColorDefaultBrush}"
-                    VerticalAlignment="Center">
-                    <TextBlock
-                        x:Name="AvatarInitial"
-                        Text="?"
-                        Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
-                        FontSize="16"
-                        FontWeight="SemiBold"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center" />
-                </Border>
-
-                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
-                    <TextBlock
-                        x:Name="HeadingText"
-                        Text="New team update"
-                        FontSize="16"
-                        FontWeight="SemiBold" />
-                    <TextBlock
-                        x:Name="AttributionText"
-                        Opacity="0.65"
-                        FontSize="12"
-                        TextWrapping="NoWrap"
-                        TextTrimming="CharacterEllipsis" />
-                </StackPanel>
-            </Grid>
+            <StackPanel Grid.Row="0" VerticalAlignment="Center" Spacing="2">
+                <TextBlock
+                    x:Name="HeadingText"
+                    Text="New team update"
+                    FontSize="16"
+                    FontWeight="SemiBold" />
+                <TextBlock
+                    x:Name="AttributionText"
+                    Opacity="0.65"
+                    FontSize="12"
+                    TextWrapping="NoWrap"
+                    TextTrimming="CharacterEllipsis" />
+            </StackPanel>
 
             <Border
                 Grid.Row="1"
