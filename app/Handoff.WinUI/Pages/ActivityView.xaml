@@ -70,14 +70,32 @@
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1"
                 CornerRadius="8">
-                <StackPanel Spacing="4">
+                <StackPanel Spacing="8">
                     <TextBlock
-                        Text="Status"
+                        Text="Filter"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock
-                        x:Name="ActivityStatusText"
-                        Text="Idle"
-                        Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox
+                            x:Name="PersonFilter"
+                            HorizontalAlignment="Stretch"
+                            PlaceholderText="Person"
+                            SelectionChanged="OnFilterChanged" />
+                        <ComboBox
+                            x:Name="RangeFilter"
+                            Grid.Column="1"
+                            HorizontalAlignment="Stretch"
+                            PlaceholderText="Time"
+                            SelectionChanged="OnFilterChanged">
+                            <ComboBoxItem Content="All time" Tag="all" IsSelected="True" />
+                            <ComboBoxItem Content="Today" Tag="today" />
+                            <ComboBoxItem Content="This week" Tag="week" />
+                            <ComboBoxItem Content="This month" Tag="month" />
+                        </ComboBox>
+                    </Grid>
                 </StackPanel>
             </Border>
         </Grid>

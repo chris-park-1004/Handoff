@@ -7,7 +7,11 @@ namespace Handoff.WinUI.Pages;
 
 public sealed partial class ActivityView : UserControl
 {
+    private const string AllPeopleSentinel = "All people";
+
     private readonly ObservableCollection<ActivityRow> _activity = new ObservableCollection<ActivityRow>();
+    private IReadOnlyList<SharedContext> _allContexts = Array.Empty<SharedContext>();
+    private bool _suppressFilterReload;
 
     public ActivityView()
     {
@@ -17,13 +21,9 @@ public sealed partial class ActivityView : UserControl
 
     public void RenderSharedContexts(IReadOnlyList<SharedContext> contexts, bool supabaseReachable)
     {
-        this._activity.Clear();
-
-        foreach (SharedContext context in contexts
-            .OrderByDescending(c => c.UpdatedAt ?? DateTime.MinValue))
-        {
-            this._activity.Add(ActivityRow.FromContext(context));
-        }
+        this._allContexts = contexts;
+        this.RebuildPersonFilter();
+        this.ApplyFilters();
 
         SharedContext? latest = contexts
             .OrderByDescending(c => c.UpdatedAt ?? DateTime.MinValue)
@@ -33,14 +33,87 @@ public sealed partial class ActivityView : UserControl
             ? "No rows"
             : latest.UpdatedAt.Value.ToLocalTime().ToString("HH:mm:ss");
         this.ContextRowsText.Text = contexts.Count.ToString();
-        this.ActivityStatusText.Text = supabaseReachable ? "Current" : "Cached";
+        _ = supabaseReachable;
     }
 
     public void RenderLoading()
     {
         this.LatestSyncText.Text = "Loading";
         this.ContextRowsText.Text = this._activity.Count.ToString();
-        this.ActivityStatusText.Text = "Refreshing";
+    }
+
+    private void OnFilterChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (this._suppressFilterReload)
+        {
+            return;
+        }
+        this.ApplyFilters();
+    }
+
+    private void RebuildPersonFilter()
+    {
+        // Preserve current selection so re-rendering on each sync cycle does not
+        // wipe what the user picked.
+        string? previous = this.PersonFilter.SelectedItem as string;
+
+        this._suppressFilterReload = true;
+        this.PersonFilter.Items.Clear();
+        this.PersonFilter.Items.Add(AllPeopleSentinel);
+
+        IEnumerable<string> people = this._allContexts
+            .Select(c => string.IsNullOrWhiteSpace(c.MemberName) ? "(unknown)" : c.MemberName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase);
+
+        foreach (string person in people)
+        {
+            this.PersonFilter.Items.Add(person);
+        }
+
+        this.PersonFilter.SelectedItem = previous != null && this.PersonFilter.Items.Contains(previous)
+            ? previous
+            : AllPeopleSentinel;
+        this._suppressFilterReload = false;
+    }
+
+    private void ApplyFilters()
+    {
+        string? person = this.PersonFilter.SelectedItem as string;
+        string range = (this.RangeFilter.SelectedItem as ComboBoxItem)?.Tag as string ?? "all";
+        DateTime? cutoff = ResolveCutoff(range);
+
+        IEnumerable<SharedContext> filtered = this._allContexts;
+        if (!string.IsNullOrEmpty(person) && person != AllPeopleSentinel)
+        {
+            filtered = filtered.Where(c =>
+                string.Equals(
+                    string.IsNullOrWhiteSpace(c.MemberName) ? "(unknown)" : c.MemberName,
+                    person,
+                    StringComparison.OrdinalIgnoreCase));
+        }
+        if (cutoff is DateTime since)
+        {
+            filtered = filtered.Where(c => c.UpdatedAt is DateTime u && u >= since);
+        }
+
+        this._activity.Clear();
+        foreach (SharedContext context in filtered.OrderByDescending(c => c.UpdatedAt ?? DateTime.MinValue))
+        {
+            this._activity.Add(ActivityRow.FromContext(context));
+        }
+    }
+
+    private static DateTime? ResolveCutoff(string range)
+    {
+        DateTime nowUtc = DateTime.UtcNow;
+        return range switch
+        {
+            "today" => DateTime.UtcNow.Date,
+            "week" => nowUtc.Date.AddDays(-(int)nowUtc.DayOfWeek),
+            "month" => new DateTime(nowUtc.Year, nowUtc.Month, 1, 0, 0, 0, DateTimeKind.Utc),
+            _ => null,
+        };
     }
 
     private sealed class ActivityRow
