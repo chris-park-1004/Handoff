@@ -169,11 +169,11 @@
                                     Spacing="2">
                                     <TextBlock
                                         Text="{Binding Title}"
-                                        TextTrimming="CharacterEllipsis" />
+                                        TextWrapping="Wrap" />
                                     <TextBlock
                                         Text="{Binding Detail}"
                                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                        TextTrimming="CharacterEllipsis" />
+                                        TextWrapping="Wrap" />
                                 </StackPanel>
                                 <StackPanel
                                     Grid.Column="3"
