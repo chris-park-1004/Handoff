@@ -45,21 +45,27 @@ public sealed partial class TeamView : UserControl
             }
         }
 
-        this._suppressToggleEvents = true;
-        this._team.Clear();
-        foreach (string name in names)
+        try
         {
-            memberByName.TryGetValue(name, out TeamMember? member);
-            configByName.TryGetValue(name, out TeamMemberEntry? entry);
-
-            this._team.Add(new TeamRosterRow
+            this._suppressToggleEvents = true;
+            this._team.Clear();
+            foreach (string name in names)
             {
-                Name = name,
-                Email = string.IsNullOrWhiteSpace(member?.Email) ? "(no email)" : member.Email!,
-                Subscribe = entry?.Subscribe ?? true,
-            });
+                memberByName.TryGetValue(name, out TeamMember? member);
+                configByName.TryGetValue(name, out TeamMemberEntry? entry);
+
+                this._team.Add(new TeamRosterRow
+                {
+                    Name = name,
+                    Email = string.IsNullOrWhiteSpace(member?.Email) ? "(no email)" : member.Email!,
+                    Subscribe = entry?.Subscribe ?? true,
+                });
+            }
         }
-        this._suppressToggleEvents = false;
+        finally
+        {
+            this._suppressToggleEvents = false;
+        }
     }
 
     private void OnSubscriptionToggled(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)

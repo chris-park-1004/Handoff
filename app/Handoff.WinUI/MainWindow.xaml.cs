@@ -435,13 +435,18 @@ public sealed partial class MainWindow : Window
     {
         this.SelfText.Text = string.IsNullOrWhiteSpace(config.Self) ? "Not set" : config.Self;
 
+        this.RenderDashboardMembers(config);
+        this.TeamRoot.RenderTeam(config, this._teamMetadata);
+    }
+
+    private void RenderDashboardMembers(HandoffConfig config)
+    {
         this._members.Clear();
         foreach (TeamMemberEntry member in config.TeamMembers.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase))
         {
             string suffix = member.Subscribe ? " (subscribed)" : " (muted)";
             this._members.Add(member.Name + suffix);
         }
-        this.TeamRoot.RenderTeam(config, this._teamMetadata);
     }
 
     private void OnTeamSubscriptionChanged(object? sender, TeamSubscriptionChangedEventArgs e)
@@ -466,7 +471,7 @@ public sealed partial class MainWindow : Window
 
         entry.Subscribe = e.Subscribe;
         this._configStore.Write(config);
-        this.RenderMembers(config);
+        this.RenderDashboardMembers(config);
     }
 
     private void ShellNavigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
