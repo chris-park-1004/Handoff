@@ -94,7 +94,9 @@ public sealed partial class ActivityView : UserControl
         }
         if (cutoff is DateTime since)
         {
-            filtered = filtered.Where(c => c.UpdatedAt is DateTime u && u >= since);
+            filtered = filtered.Where(c =>
+                c.UpdatedAt is DateTime u &&
+                ToLocalTime(u) >= since);
         }
 
         this._activity.Clear();
@@ -106,14 +108,19 @@ public sealed partial class ActivityView : UserControl
 
     private static DateTime? ResolveCutoff(string range)
     {
-        DateTime nowUtc = DateTime.UtcNow;
+        DateTime today = DateTime.Today;
         return range switch
         {
-            "today" => DateTime.UtcNow.Date,
-            "week" => nowUtc.Date.AddDays(-(int)nowUtc.DayOfWeek),
-            "month" => new DateTime(nowUtc.Year, nowUtc.Month, 1, 0, 0, 0, DateTimeKind.Utc),
+            "today" => today,
+            "week" => today.AddDays(-(int)today.DayOfWeek),
+            "month" => new DateTime(today.Year, today.Month, 1),
             _ => null,
         };
+    }
+
+    private static DateTime ToLocalTime(DateTime value)
+    {
+        return value.Kind == DateTimeKind.Local ? value : value.ToLocalTime();
     }
 
     private sealed class ActivityRow
