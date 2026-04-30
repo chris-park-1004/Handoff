@@ -47,6 +47,7 @@ public sealed partial class ReceiverHostWindow : Window
         var appWindow = AppWindow.GetFromWindowId(windowId);
 
         appWindow.Title = "Handoff";
+        appWindow.SetIcon("Assets/Logo.ico");
 
         if (AppWindowTitleBar.IsCustomizationSupported())
         {
@@ -76,36 +77,94 @@ public sealed partial class ReceiverHostWindow : Window
         var stdinPreview = ReadStdinPreview();
         if (!string.IsNullOrWhiteSpace(stdinPreview))
         {
-            AvatarInitial.Text = "•";
-            HeadingText.Text = "Incoming team context";
-            AttributionText.Text = "Pending injection into Claude Code";
-            CommitMessageText.Text = string.Empty;
-            SummaryText.Text = stdinPreview;
-            ChangedFilesText.Text = string.Empty;
+            var parsed = ParseStdinPreview(stdinPreview);
+            ApplyContent(parsed.Author, parsed.Branch, parsed.Summary, parsed.CommitMessage, parsed.CommitSha);
             return;
         }
 
         var change = TeamChange.FindLatest();
         if (change is null)
         {
-            AvatarInitial.Text = "•";
             HeadingText.Text = "No team updates yet";
             AttributionText.Text = string.Empty;
-            CommitMessageText.Text = string.Empty;
             SummaryText.Text = "Once a teammate shares an update, you'll see it here.";
-            ChangedFilesText.Text = string.Empty;
+            CommitDetailText.Text = string.Empty;
             AcceptButton.IsEnabled = false;
             DenyButton.IsEnabled = false;
             return;
         }
 
-        var name = FormatName(change.Author);
-        AvatarInitial.Text = GetInitial(name);
-        HeadingText.Text = name;
-        AttributionText.Text = $"{change.Branch} • {FormatTime(change.Timestamp)}";
-        CommitMessageText.Text = change.CommitMessage;
-        SummaryText.Text = change.Summary;
-        ChangedFilesText.Text = FormatChangedFiles(change.ChangedFiles);
+        ApplyContent(change.Author, change.Branch, change.Summary, change.CommitMessage, change.CommitSha);
+    }
+
+    private void ApplyContent(string author, string branch, string summary, string commitMessage, string commitSha)
+    {
+        var name = string.IsNullOrWhiteSpace(author) ? string.Empty : FormatName(author);
+        HeadingText.Text = string.IsNullOrEmpty(name)
+            ? "Incoming team context"
+            : "Incoming team context · " + name;
+        AttributionText.Text = branch ?? string.Empty;
+        SummaryText.Text = string.IsNullOrWhiteSpace(summary) ? "(no summary)" : summary;
+        CommitDetailText.Text = FormatCommit(commitMessage, commitSha);
+    }
+
+    private static string FormatCommit(string message, string sha)
+    {
+        var shortSha = string.IsNullOrEmpty(sha) ? string.Empty : (sha.Length > 7 ? sha[..7] : sha);
+        if (string.IsNullOrEmpty(message) && string.IsNullOrEmpty(shortSha))
+        {
+            return string.Empty;
+        }
+        if (string.IsNullOrEmpty(shortSha)) return message;
+        if (string.IsNullOrEmpty(message)) return shortSha;
+        return message + " (" + shortSha + ")";
+    }
+
+    private record ParsedPreview(string Author, string Branch, string Summary, string CommitMessage, string CommitSha);
+
+    private static ParsedPreview ParseStdinPreview(string text)
+    {
+        string author = "", branch = "", summary = "", commitMessage = "", commitSha = "";
+
+        foreach (var raw in text.Split('\n'))
+        {
+            var line = raw.TrimEnd('\r');
+            if (line.StartsWith("## From ", StringComparison.Ordinal))
+            {
+                var rest = line["## From ".Length..].Trim();
+                var slash = rest.IndexOf('/');
+                if (slash > 0)
+                {
+                    author = rest[..slash];
+                    branch = rest[(slash + 1)..];
+                }
+                else
+                {
+                    author = rest;
+                }
+            }
+            else if (line.StartsWith("**Summary**:", StringComparison.Ordinal))
+            {
+                summary = line["**Summary**:".Length..].Trim();
+            }
+            else if (line.StartsWith("**Commit**:", StringComparison.Ordinal))
+            {
+                var rest = line["**Commit**:".Length..].Trim();
+                var openParen = rest.LastIndexOf('(');
+                var closeParen = rest.LastIndexOf(')');
+                if (openParen > 0 && closeParen > openParen)
+                {
+                    commitMessage = rest[..openParen].Trim();
+                    commitSha = rest.Substring(openParen + 1, closeParen - openParen - 1).Trim();
+                }
+                else
+                {
+                    commitMessage = rest;
+                }
+            }
+        }
+
+        return new ParsedPreview(author, branch, summary, commitMessage, commitSha);
     }
 
     private void OnRootLoaded(object sender, RoutedEventArgs e)
@@ -163,26 +222,5 @@ public sealed partial class ReceiverHostWindow : Window
     private static string FormatName(string name)
     {
         return CultureInfo.CurrentCulture.TextInfo.ToTitleCase(name);
-    }
-
-    private static string GetInitial(string name)
-    {
-        var trimmed = name.Trim();
-        return trimmed.Length == 0 ? "?" : trimmed[..1].ToUpperInvariant();
-    }
-
-    private static string FormatTime(DateTimeOffset time)
-    {
-        return time.ToLocalTime().ToString("MMM d, h:mm tt", CultureInfo.CurrentCulture);
-    }
-
-    private static string FormatChangedFiles(IReadOnlyList<string> files)
-    {
-        return files.Count switch
-        {
-            0 => "No files listed.",
-            1 => $"1 file changed: {files[0]}",
-            _ => $"{files.Count} files changed, including {files[0]}",
-        };
     }
 }
