@@ -159,6 +159,23 @@ function getContextIdentity(row, hash) {
   };
 }
 
+/**
+ * Fingerprint the actual teammate message content, excluding DB identity fields
+ * like id/updated_at. This prevents duplicate inserts of the same shared
+ * message from re-prompting just because Supabase assigned a new row id.
+ */
+function getContentKey(row) {
+  const content = {
+    member_name: row.member_name || '',
+    branch: row.branch || '',
+    commit_sha: row.commit_sha || '',
+    commit_message: row.commit_message || '',
+    summary: row.summary || '',
+    changed_files: row.changed_files || null,
+  };
+  return `content#${hashContent(JSON.stringify(content))}`;
+}
+
 // Pulls every shared_contexts row via Supabase REST. We use curl (shipped on
 // Win10+) to keep this synchronous — hooks must complete fast and predictably,
 // and async/await would add a layer for no real gain at this scale.
@@ -232,10 +249,17 @@ function findNewSharedContexts(self, teamMembers, watermarks, rows) {
     // for the columns we read).
     const hash = hashContent(JSON.stringify(row));
     const identity = getContextIdentity(row, hash);
+    const contentKey = getContentKey(row);
     const legacyKey = identity.displayKey;
 
-    if (!watermarks[identity.key] && watermarks[legacyKey] !== hash) {
-      newItems.push({ key: identity.key, displayKey: identity.displayKey, hash, parsed: row });
+    if (!watermarks[identity.key] && !watermarks[contentKey] && watermarks[legacyKey] !== hash) {
+      newItems.push({
+        key: identity.key,
+        contentKey,
+        displayKey: identity.displayKey,
+        hash,
+        parsed: row,
+      });
     } else {
       skipped.watermarked += 1;
     }
@@ -359,10 +383,12 @@ try {
     // the same content never re-prompts the user. Other exit codes (signal,
     // crash, ENOENT) leave the watermark untouched so the next fire retries.
     if (code === 0 || code === 1) {
-      watermarks[item.key] = {
+      const seen = {
         hash: item.hash,
         seen_at: new Date().toISOString(),
       };
+      watermarks[item.key] = seen;
+      watermarks[item.contentKey] = seen;
     } else {
       log(`${event}: gate (${item.key}) did not finish cleanly — watermark unchanged`);
     }
